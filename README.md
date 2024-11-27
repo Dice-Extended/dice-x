@@ -74,6 +74,8 @@ $$ C(x) = \operatorname*{arg\,min}_{c_1, ... , c_k} \frac{1}{2} \sum_{i}^{k}ylos
 - **Robustness Loss**: [Guidotti (2024)](https://link.springer.com/article/10.1007/s10618-022-00831-6) defines robustness as necessity of similar instances being explained by similar counterfactual explanations such that if $b(x_1)=b(x_2)=y$ then an explainer $f$ should generate counterfactuals $c_1$ and $c_2$ that are similar and can explain $x_1$ and $x_2$. The robustness term that is based on [Dice-Sørensen Coefficient](https://en.wikipedia.org/wiki/Dice-S%C3%B8rensen_coefficient), is adopted from [Bonasera and Carrizosa (2024)](
 https://doi.org/10.48550/arXiv.2407.00843).
 
+$$Robustness(c_i, c_i') = \frac{2 * \lvert c_i \cap c_i' \rvert}{\lvert c_i \rvert + \lvert c_i' \rvert} $$
+
 By adjusting the weights $\lambda_1$, $\lambda_2$, $\lambda_3$ counterfactual explanations can be customised by specific needs.
 
 ## Evaluation
@@ -92,7 +94,7 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 In case you may found useful this work for your research cite the original dice paper and this study's paper as well.
 
-```
+```bibtex
 @inproceedings{mothilal2020dice,
   title={Explaining machine learning classifiers through diverse counterfactual explanations},
   author={Mothilal, Ramaravind K and Sharma, Amit and Tan, Chenhao},
