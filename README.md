@@ -70,7 +70,7 @@ $$ C(x) = \operatorname*{arg\,min}_{c_1, ... , c_k} \frac{1}{2} \sum_{i}^{k}ylos
 -->
 
 $$
-C(x) = \underset{c_1, ..., c_k}{\operatorname{\argmin}}
+C(x) = \argmin_{c_1, ..., c_k}
 \frac{1}{2} \sum_{i=1}^{k} yloss(f(c_i), y) +
 \frac{\lambda_1}{k} \sum_{i=1}^{k} dist(c_i, x) -
 \lambda_2 \cdot dpp\_diversity(c_1, ..., c_k) -
