@@ -1,6 +1,3 @@
-<script type="text/javascript" async
-  src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js">
-</script>
 
 # DiCE-Extended: Ensemble Selection of Diverse Counterfactual Explanations Using Continuous Optimization
 
@@ -10,8 +7,6 @@
 ## Overview
 
 [Mothilal et al. (2020)](https://dl.acm.org/doi/10.1145/3351095.3372850) introduce their method of generating counterfactual explanations considering _feasibility_, and _diversity_. [Guidotti and Ruggieri (2021)](https://link.springer.com/chapter/10.1007/978-3-030-88942-5_28), claim counterfactual explanations to be robust they should be similar for similar instances when they explain. In this study, in a search to improve the quality and reliability of the counterfactual explanations _robustness_ is found to be helpful and it also introduced in the optimization function.
-
-
 
 DiCE-Extended is built upon the [DiCE (Diverse Counterfactual Explanations)](https://github.com/interpretml/DiCE) [(Mothilal et al. 2020)](https://dl.acm.org/doi/10.1145/3351095.3372850) framework by introducing a robustness term in the optimization function.
 
@@ -70,7 +65,19 @@ dice_exp.visualize_as_dataframe()
 
 The core enhancement in DiCE-Extended is the manipulated optimization function, designed to balance proximity, diversity, and feasibility of counterfactuals. The function is formulated as:
 
-$$ C(x) = \operatorname*{arg\,min}_{c_1, ... , c_k} \frac{1}{2} \sum_{i}^{k}yloss(f (c_i ), y) + \frac{\lambda_1}{k}\sum_{i}^{k}dist(c_i , x) - \lambda_2*dpp\_diversity(c_1, ... ,c_k) - \frac{\lambda_3}{k}\sum_{i}^{k}robustness(c_i, c_i')$$
+<!-- 
+$$ C(x) = \operatorname*{arg\,min}_{c_1, ... , c_k} \frac{1}{2} \sum_{i}^{k}yloss(f (c_i ), y) + \frac{\lambda_1}{k}\sum_{i}^{k}dist(c_i , x) - \lambda_2*dpp\_diversity(c_1, ... ,c_k) - \frac{\lambda_3}{k}\sum_{i}^{k}robustness(c_i, c_i') $$
+-->
+
+$$
+C(x) = \argmin_{c_1, ..., c_k} 
+\frac{1}{2} \sum_{i=1}^{k} yloss(f(c_i), y) + 
+\frac{\lambda_1}{k} \sum_{i=1}^{k} dist(c_i, x) - 
+\lambda_2 \cdot dpp\_diversity(c_1, ..., c_k) - 
+\frac{\lambda_3}{k} \sum_{i=1}^{k} robustness(c_i, c_i')
+$$
+
+
 
 - **Proximity Loss**: The first term that averages the distance between generated counterfactuals and the original input ensure the counterfactuals to be as close as possible to the original input.
 - **Diversity Loss**: Diversity of the counterfactual explanations is aquired by determinental point process of which loss is represented by the second term and it ensures that _k_ number of counterfactual explanations are generated.
