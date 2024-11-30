@@ -70,14 +70,12 @@ $$ C(x) = \operatorname*{arg\,min}_{c_1, ... , c_k} \frac{1}{2} \sum_{i}^{k}ylos
 -->
 
 $$
-C(x) = \argmin_{c_1, ..., c_k} 
-\frac{1}{2} \sum_{i=1}^{k} yloss(f(c_i), y) + 
-\frac{\lambda_1}{k} \sum_{i=1}^{k} dist(c_i, x) - 
-\lambda_2 \cdot dpp\_diversity(c_1, ..., c_k) - 
+C(x) = \underset{c_1, ..., c_k}{\operatorname{\argmin}}
+\frac{1}{2} \sum_{i=1}^{k} yloss(f(c_i), y) +
+\frac{\lambda_1}{k} \sum_{i=1}^{k} dist(c_i, x) -
+\lambda_2 \cdot dpp\_diversity(c_1, ..., c_k) -
 \frac{\lambda_3}{k} \sum_{i=1}^{k} robustness(c_i, c_i')
 $$
-
-
 
 - **Proximity Loss**: The first term that averages the distance between generated counterfactuals and the original input ensure the counterfactuals to be as close as possible to the original input.
 - **Diversity Loss**: Diversity of the counterfactual explanations is aquired by determinental point process of which loss is represented by the second term and it ensures that _k_ number of counterfactual explanations are generated.
