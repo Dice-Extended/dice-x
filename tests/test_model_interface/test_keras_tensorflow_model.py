@@ -1,8 +1,8 @@
 import pytest
 
-import dice_ml
-from dice_ml.utils import helpers
-from dice_ml.utils.helpers import DataTransfomer
+import dice_ml_x
+from dice_ml_x.utils import helpers
+from dice_ml_x.utils.helpers import DataTransfomer
 
 tf = pytest.importorskip("tensorflow")
 
@@ -18,12 +18,12 @@ def tf_session():
 def tf_model_object():
     backend = 'TF'+tf.__version__[0]
     ML_modelpath = helpers.get_adult_income_modelpath(backend=backend)
-    m = dice_ml.Model(model_path=ML_modelpath, backend=backend, func='ohe-min-max')
+    m = dice_ml_x.Model(model_path=ML_modelpath, backend=backend, func='ohe-min-max')
     return m
 
 
 def test_model_initiation(tf_model_object):
-    assert isinstance(tf_model_object, dice_ml.model_interfaces.keras_tensorflow_model.KerasTensorFlowModel)
+    assert isinstance(tf_model_object, dice_ml_x.model_interfaces.keras_tensorflow_model.KerasTensorFlowModel)
 
 
 def test_model_initiation_fullpath():
@@ -34,8 +34,8 @@ def test_model_initiation_fullpath():
     backend = {'model': 'keras_tensorflow_model.KerasTensorFlowModel',
                'explainer': 'dice_tensorflow'+tf_version+'.DiceTensorFlow'+tf_version}
     ML_modelpath = helpers.get_adult_income_modelpath(backend=backend)
-    m = dice_ml.Model(model_path=ML_modelpath, backend=backend)
-    assert isinstance(m, dice_ml.model_interfaces.keras_tensorflow_model.KerasTensorFlowModel)
+    m = dice_ml_x.Model(model_path=ML_modelpath, backend=backend)
+    assert isinstance(m, dice_ml_x.model_interfaces.keras_tensorflow_model.KerasTensorFlowModel)
 
 
 class TestKerasModelMethods:

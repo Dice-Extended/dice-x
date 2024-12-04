@@ -8,9 +8,9 @@ import timeit
 import numpy as np
 import pandas as pd
 
-from dice_ml import diverse_counterfactuals as exp
-from dice_ml.constants import ModelTypes
-from dice_ml.explainer_interfaces.explainer_base import ExplainerBase
+from dice_ml_x import diverse_counterfactuals as exp
+from dice_ml_x.constants import ModelTypes
+from dice_ml_x.explainer_interfaces.explainer_base import ExplainerBase
 
 
 class DiceKD(ExplainerBase):

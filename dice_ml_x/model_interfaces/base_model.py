@@ -6,9 +6,9 @@ import pickle
 
 import numpy as np
 
-from dice_ml.constants import ModelTypes
-from dice_ml.utils.exception import SystemException
-from dice_ml.utils.helpers import DataTransfomer
+from dice_ml_x.constants import ModelTypes
+from dice_ml_x.utils.exception import SystemException
+from dice_ml_x.utils.helpers import DataTransfomer
 
 
 class BaseModel:

@@ -3,7 +3,7 @@
 import tensorflow as tf
 from tensorflow import keras
 
-from dice_ml.model_interfaces.base_model import BaseModel
+from dice_ml_x.model_interfaces.base_model import BaseModel
 
 
 class KerasTensorFlowModel(BaseModel):

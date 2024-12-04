@@ -3,8 +3,8 @@
 import numpy as np
 import torch
 
-from dice_ml.constants import ModelTypes
-from dice_ml.model_interfaces.base_model import BaseModel
+from dice_ml_x.constants import ModelTypes
+from dice_ml_x.model_interfaces.base_model import BaseModel
 
 
 class PyTorchModel(BaseModel):

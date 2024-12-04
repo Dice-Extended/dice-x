@@ -1,6 +1,6 @@
 import pandas as pd
 
-from dice_ml.utils.helpers import load_adult_income_dataset
+from dice_ml_x.utils.helpers import load_adult_income_dataset
 
 
 class TestHelpers:

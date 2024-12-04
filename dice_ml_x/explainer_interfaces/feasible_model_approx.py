@@ -4,9 +4,9 @@ import torch
 import torch.utils.data
 from torch.nn import functional as F
 
-from dice_ml.explainer_interfaces.explainer_base import ExplainerBase
-from dice_ml.explainer_interfaces.feasible_base_vae import FeasibleBaseVAE
-from dice_ml.utils.helpers import get_base_gen_cf_initialization
+from dice_ml_x.explainer_interfaces.explainer_base import ExplainerBase
+from dice_ml_x.explainer_interfaces.feasible_base_vae import FeasibleBaseVAE
+from dice_ml_x.utils.helpers import get_base_gen_cf_initialization
 
 
 class FeasibleModelApprox(FeasibleBaseVAE, ExplainerBase):

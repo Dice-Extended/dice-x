@@ -7,7 +7,7 @@ import warnings
 
 from raiutils.exceptions import UserConfigValidationException
 
-from dice_ml.constants import BackEndTypes, ModelTypes
+from dice_ml_x.constants import BackEndTypes, ModelTypes
 
 
 class Model:
@@ -61,7 +61,7 @@ def decide(backend):
     """
     if backend == BackEndTypes.Sklearn:
         # random sampling of CFs
-        from dice_ml.model_interfaces.base_model import BaseModel
+        from dice_ml_x.model_interfaces.base_model import BaseModel
         return BaseModel
 
     elif backend == BackEndTypes.Tensorflow1 or backend == BackEndTypes.Tensorflow2:
@@ -70,7 +70,7 @@ def decide(backend):
             import tensorflow  # noqa: F401
         except ImportError:
             raise UserConfigValidationException("Unable to import tensorflow. Please install tensorflow")
-        from dice_ml.model_interfaces.keras_tensorflow_model import \
+        from dice_ml_x.model_interfaces.keras_tensorflow_model import \
             KerasTensorFlowModel
         return KerasTensorFlowModel
 
@@ -80,7 +80,7 @@ def decide(backend):
             import torch  # noqa: F401
         except ImportError:
             raise UserConfigValidationException("Unable to import torch. Please install torch from https://pytorch.org/")
-        from dice_ml.model_interfaces.pytorch_model import PyTorchModel
+        from dice_ml_x.model_interfaces.pytorch_model import PyTorchModel
         return PyTorchModel
 
     else:

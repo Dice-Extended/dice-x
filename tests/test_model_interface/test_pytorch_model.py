@@ -1,8 +1,8 @@
 import pytest
 
-import dice_ml
-from dice_ml.utils import helpers
-from dice_ml.utils.helpers import DataTransfomer
+import dice_ml_x
+from dice_ml_x.utils import helpers
+from dice_ml_x.utils.helpers import DataTransfomer
 
 pyt = pytest.importorskip("torch")
 
@@ -11,12 +11,12 @@ pyt = pytest.importorskip("torch")
 def pyt_model_object():
     backend = 'PYT'
     ML_modelpath = helpers.get_adult_income_modelpath(backend=backend)
-    m = dice_ml.Model(model_path=ML_modelpath, backend=backend, func='ohe-min-max')
+    m = dice_ml_x.Model(model_path=ML_modelpath, backend=backend, func='ohe-min-max')
     return m
 
 
 def test_model_initiation(pyt_model_object):
-    assert isinstance(pyt_model_object, dice_ml.model_interfaces.pytorch_model.PyTorchModel)
+    assert isinstance(pyt_model_object, dice_ml_x.model_interfaces.pytorch_model.PyTorchModel)
 
 
 def test_model_initiation_fullpath():
@@ -27,8 +27,8 @@ def test_model_initiation_fullpath():
     backend = {'model': 'pytorch_model.PyTorchModel',
                'explainer': 'dice_pytorch.DicePyTorch'}
     ML_modelpath = helpers.get_adult_income_modelpath(backend=backend)
-    m = dice_ml.Model(model_path=ML_modelpath, backend=backend)
-    assert isinstance(m, dice_ml.model_interfaces.pytorch_model.PyTorchModel)
+    m = dice_ml_x.Model(model_path=ML_modelpath, backend=backend)
+    assert isinstance(m, dice_ml_x.model_interfaces.pytorch_model.PyTorchModel)
 
 
 class TestPyTorchModelMethods:

@@ -6,14 +6,14 @@ import pytest
 from raiutils.exceptions import UserConfigValidationException
 from sklearn.datasets import load_iris
 
-import dice_ml
-from dice_ml.utils import helpers
+import dice_ml_x
+from dice_ml_x.utils import helpers
 
 
 @pytest.fixture(scope='session')
 def data_object():
     dataset = helpers.load_adult_income_dataset()
-    return dice_ml.Data(dataframe=dataset, continuous_features=['age', 'hours_per_week'],
+    return dice_ml_x.Data(dataframe=dataset, continuous_features=['age', 'hours_per_week'],
                         outcome_name='income', permitted_range={'age': [45, 60]},
                         continuous_features_precision={'hours_per_week': 2})
 
@@ -54,11 +54,11 @@ class TestErrorScenariosPublicDataInterface:
 
         if data_type == DataTypeCombinations.Incorrect:
             with pytest.raises(ValueError, match="should provide a pandas dataframe"):
-                dice_ml.Data(dataframe=dataset.values, continuous_features=feature_names,
+                dice_ml_x.Data(dataframe=dataset.values, continuous_features=feature_names,
                              outcome_name='target')
         else:
             with pytest.raises(ValueError, match="should provide a pandas dataframe"):
-                dice_ml.Data(dataframe=None, continuous_features=feature_names,
+                dice_ml_x.Data(dataframe=None, continuous_features=feature_names,
                              outcome_name='target')
 
     @pytest.mark.parametrize('data_type', [DataTypeCombinations.Incorrect,
@@ -73,19 +73,19 @@ class TestErrorScenariosPublicDataInterface:
             with pytest.raises(
                     ValueError,
                     match=re.escape("should provide the name(s) of continuous features in the data as a list")):
-                dice_ml.Data(dataframe=dataset, continuous_features=np.array(iris.feature_names),
+                dice_ml_x.Data(dataframe=dataset, continuous_features=np.array(iris.feature_names),
                              outcome_name='target')
         elif data_type == DataTypeCombinations.AsNone:
             with pytest.raises(
                     ValueError,
                     match=re.escape("should provide the name(s) of continuous features in the data as a list")):
-                dice_ml.Data(dataframe=dataset, continuous_features=None,
+                dice_ml_x.Data(dataframe=dataset, continuous_features=None,
                              outcome_name='target')
         else:
             with pytest.raises(
                     ValueError,
                     match='continuous_features should be provided'):
-                dice_ml.Data(dataframe=dataset, outcome_name='target')
+                dice_ml_x.Data(dataframe=dataset, outcome_name='target')
 
     @pytest.mark.parametrize('data_type', [DataTypeCombinations.Incorrect,
                                            DataTypeCombinations.AsNone,
@@ -99,19 +99,19 @@ class TestErrorScenariosPublicDataInterface:
             with pytest.raises(
                     ValueError,
                     match="should provide the name of outcome feature as a string"):
-                dice_ml.Data(dataframe=dataset, continuous_features=feature_names,
+                dice_ml_x.Data(dataframe=dataset, continuous_features=feature_names,
                              outcome_name=1)
         elif data_type == DataTypeCombinations.AsNone:
             with pytest.raises(
                     ValueError,
                     match="should provide the name of outcome feature as a string"):
-                dice_ml.Data(dataframe=dataset, continuous_features=feature_names,
+                dice_ml_x.Data(dataframe=dataset, continuous_features=feature_names,
                              outcome_name=None)
         else:
             with pytest.raises(
                     ValueError,
                     match="should provide the name of outcome feature"):
-                dice_ml.Data(dataframe=dataset, continuous_features=feature_names)
+                dice_ml_x.Data(dataframe=dataset, continuous_features=feature_names)
 
     def test_not_found_outcome_name(self):
         iris = load_iris(as_frame=True)
@@ -121,7 +121,7 @@ class TestErrorScenariosPublicDataInterface:
         with pytest.raises(
                 UserConfigValidationException,
                 match="outcome_name invalid not found in"):
-            dice_ml.Data(dataframe=dataset, continuous_features=feature_names,
+            dice_ml_x.Data(dataframe=dataset, continuous_features=feature_names,
                          outcome_name='invalid')
 
     def test_unseen_continuous_feature_names(self):
@@ -133,7 +133,7 @@ class TestErrorScenariosPublicDataInterface:
         with pytest.raises(
                 UserConfigValidationException,
                 match="continuous_features contains some feature names which are not part of columns in dataframe"):
-            dice_ml.Data(dataframe=dataset, continuous_features=feature_names,
+            dice_ml_x.Data(dataframe=dataset, continuous_features=feature_names,
                          outcome_name='target')
 
     def test_unseen_permitted_range(self):
@@ -145,12 +145,12 @@ class TestErrorScenariosPublicDataInterface:
         with pytest.raises(
                 UserConfigValidationException,
                 match="permitted_range contains some feature names which are not part of columns in dataframe"):
-            dice_ml.Data(dataframe=dataset, continuous_features=feature_names,
+            dice_ml_x.Data(dataframe=dataset, continuous_features=feature_names,
                          outcome_name='target', permitted_range=permitted_range)
 
     def test_min_max_equal(self):
         dataset = helpers.load_min_max_equal_dataset()
-        dice_data = dice_ml.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
+        dice_data = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
         assert all(dice_data.normalize_data(dice_data.data_df)['Numerical'] == 0)
 
     def test_unseen_continuous_features_precision(self):
@@ -163,7 +163,7 @@ class TestErrorScenariosPublicDataInterface:
                 UserConfigValidationException,
                 match="continuous_features_precision contains some feature names which"
                       " are not part of columns in dataframe"):
-            dice_ml.Data(dataframe=dataset, continuous_features=feature_names,
+            dice_ml_x.Data(dataframe=dataset, continuous_features=feature_names,
                          outcome_name='target',
                          continuous_features_precision=continuous_features_precision)
 
@@ -175,7 +175,7 @@ class TestChecksPublicDataInterface:
         feature_names = iris.feature_names
         dataset = iris.frame
 
-        dice_data = dice_ml.Data(dataframe=dataset, continuous_features=feature_names,
+        dice_data = dice_ml_x.Data(dataframe=dataset, continuous_features=feature_names,
                                  outcome_name='target')
 
         if features_to_vary is not None and features_to_vary != 'all':
@@ -192,7 +192,7 @@ class TestChecksPublicDataInterface:
         feature_names = iris.feature_names
         dataset = iris.frame
 
-        dice_data = dice_ml.Data(dataframe=dataset, continuous_features=feature_names,
+        dice_data = dice_ml_x.Data(dataframe=dataset, continuous_features=feature_names,
                                  outcome_name='target')
 
         if permitted_range is not None:
@@ -210,7 +210,7 @@ class TestChecksPublicDataInterface:
         dataset = iris.frame
         dataset['new_feature'] = np.repeat(['known_category'], dataset.shape[0])
 
-        dice_data = dice_ml.Data(dataframe=dataset, continuous_features=feature_names,
+        dice_data = dice_ml_x.Data(dataframe=dataset, continuous_features=feature_names,
                                  outcome_name='target')
 
         with pytest.raises(
@@ -230,7 +230,7 @@ class TestChecksPublicDataInterface:
         feature_names = iris.feature_names
         dataset = iris.frame
 
-        dice_data = dice_ml.Data(dataframe=dataset, continuous_features=feature_names,
+        dice_data = dice_ml_x.Data(dataframe=dataset, continuous_features=feature_names,
                                  outcome_name='target')
 
         assert dice_data.get_data_type('sepal length (cm)') == 'float'
@@ -243,7 +243,7 @@ class TestChecksPublicDataInterface:
         feature_names = iris.feature_names
         dataset = iris.frame
 
-        dice_data = dice_ml.Data(dataframe=dataset, continuous_features=feature_names,
+        dice_data = dice_ml_x.Data(dataframe=dataset, continuous_features=feature_names,
                                  outcome_name='target')
 
         with pytest.raises(
@@ -257,7 +257,7 @@ class TestUserDataCorruption:
     def test_user_data_corruption(self):
         dataset = helpers.load_adult_income_dataset()
         dataset_copy = dataset.copy()
-        dice_ml.Data(dataframe=dataset, continuous_features=['age', 'hours_per_week'],
+        dice_ml_x.Data(dataframe=dataset, continuous_features=['age', 'hours_per_week'],
                      outcome_name='income', permitted_range={'age': [45, 60]},
                      continuous_features_precision={'hours_per_week': 2})
         pd.testing.assert_frame_equal(dataset, dataset_copy)

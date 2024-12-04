@@ -1,13 +1,13 @@
 import pytest
 
-import dice_ml
+import dice_ml_x
 
 
 def test_data_initiation(public_data_object, private_data_object):
-    assert isinstance(public_data_object, dice_ml.data_interfaces.public_data_interface.PublicData), \
+    assert isinstance(public_data_object, dice_ml_x.data_interfaces.public_data_interface.PublicData), \
         "the given parameters should instantiate PublicData class"
 
-    assert isinstance(private_data_object, dice_ml.data_interfaces.private_data_interface.PrivateData), \
+    assert isinstance(private_data_object, dice_ml_x.data_interfaces.private_data_interface.PrivateData), \
         "the given parameters should instantiate PrivateData class"
 
 

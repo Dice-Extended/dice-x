@@ -6,7 +6,7 @@ private data whose meta data are only available (such as the feature names and
 range/levels of different features) by specifying appropriate parameters.
 """
 
-from dice_ml.data_interfaces.base_data_interface import _BaseData
+from dice_ml_x.data_interfaces.base_data_interface import _BaseData
 
 
 class Data(_BaseData):
@@ -34,9 +34,9 @@ def decide(params):
     """
     if 'dataframe' in params:
         # if params contain a Pandas dataframe, then use PublicData class
-        from dice_ml.data_interfaces.public_data_interface import PublicData
+        from dice_ml_x.data_interfaces.public_data_interface import PublicData
         return PublicData
     else:
         # use PrivateData if only meta data is provided
-        from dice_ml.data_interfaces.private_data_interface import PrivateData
+        from dice_ml_x.data_interfaces.private_data_interface import PrivateData
         return PrivateData
