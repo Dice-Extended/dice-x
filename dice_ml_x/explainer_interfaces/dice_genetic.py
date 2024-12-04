@@ -9,6 +9,7 @@ import timeit
 import numpy as np
 import pandas as pd
 from raiutils.exceptions import UserConfigValidationException
+import scipy.optimize as opt
 
 from dice_ml_x import diverse_counterfactuals as exp
 from dice_ml_x.constants import ModelTypes
@@ -207,7 +208,7 @@ class DiceGenetic(ExplainerBase):
 
     def _generate_counterfactuals(self, query_instance, total_CFs, perturbation_method, initialization="kdtree",
                                   desired_range=None, desired_class="opposite", proximity_weight=0.2,
-                                  sparsity_weight=0.2, diversity_weight=5.0, robustness_weight=0.5,
+                                  sparsity_weight=0.2, diversity_weight=5.0, robustness_weight=0.2,
                                   categorical_penalty=0.1, algorithm="DiverseCF", features_to_vary="all",
                                   permitted_range=None, yloss_type="hinge_loss", diversity_loss_type="dpp_style:inverse_dist",
                                   feature_weights="inverse_mad", stopping_threshold=0.5, posthoc_sparsity_param=0.1,
@@ -351,16 +352,112 @@ class DiceGenetic(ExplainerBase):
 
         return predicted_values
     
+    def generate_perturbations_hybrid(self, input_instance: pd.DataFrame, method: str, max_iter=500,
+                               tol=1e-1, max_attempts: int=20, **kwargs) -> pd.DataFrame:
+        """
+        Generates perturbations for given counterfactual instances.
+
+        Args:
+            input_instance (pandas.DataFrame): Counterfactual instance that will be perturbed.
+            method (str): Perturbation strategy. Supported methods:
+                - "gaussian" (GaussianPerturbation)
+                - "random" (RandomPerturbation)
+                - "spherical" (SphericalPerturbation)
+            max_iter (int): Maximum number of iteration for optimization process.
+            tol (float): Tolerance for convergence.
+            max_attempts (int): Maximum number of attempts if the optimization fails.
+            **kwargs (dict): Additional arguments that will be passed to the perturbation generation method.
+        Returns:
+            pandas.DataFrame: Perturbed counterfactuals as pandas.DataFrame.
+        """
+        perturbation_instance = PerturbationFactory.get_perturbation(method, **kwargs)
+        perturbed_cfs = []
+
+        for idx, c_i in input_instance.iterrows():
+            c_i_df = pd.DataFrame([c_i])
+            pred_c_i_df = self.predict_fn_scores(c_i_df)
+
+            target_class = np.argmax(pred_c_i_df)
+
+            attempt_cnt = 0
+            valid_perturbation_found = False
+            while not valid_perturbation_found:
+                attempt_cnt += 1
+                initial_c_i_prime = perturbation_instance.generate(c_i=c_i_df)
+                initial_guess_df = self.label_encode(initial_c_i_prime)
+                initial_guess = initial_guess_df.iloc[0, :].values
+
+                bounds = []
+                ranges = self.data_interface.get_features_range_float()[1]
+
+                for feature in c_i_df.columns:
+                    feat_min, feat_max = ranges[feature]
+                    bounds.append((feat_min, feat_max))
+
+                categorical_ranges = {category: rng for category, rng in self.data_interface.get_features_range()[1].items()
+                                    if category in self.data_interface.categorical_feature_names}      
+                  
+                def l2_objective(perturbed_values: np.ndarray):
+                    """Computes the l2 loss for predictions"""
+                    perturbed_vals_df = pd.DataFrame([perturbed_values], columns=c_i_df.columns)
+                    
+                    for cat in self.data_interface.categorical_feature_names:
+                        if cat in perturbed_vals_df.columns:
+                            category_idx = int(round(perturbed_vals_df.at[0, cat]))
+                            category_idx = np.clip(category_idx, 0, len(categorical_ranges[cat]))
+                            perturbed_vals_df.at[0, cat] = categorical_ranges[cat][category_idx]
+
+                    pred_c_i_proba = self.predict_fn_scores(c_i_df)
+                    pred_c_i_prime_proba = self.predict_fn_scores(perturbed_vals_df)
+
+                    pred_c_i_proba_class = pred_c_i_proba[0][target_class]
+                    pred_c_i_prime_proba_class = pred_c_i_prime_proba[0][target_class]
+
+                    loss = (pred_c_i_proba_class - pred_c_i_prime_proba_class) ** 2
+                    return loss
+            
+                result = opt.minimize(
+                    fun=l2_objective,
+                    x0=initial_guess,
+                    bounds=bounds,
+                    method="L-BFGS-B",
+                    options={'maxiter': max_iter, 'disp': False}
+                )
+
+                if (result.success and result.fun <= tol):
+                    perturbed_df = pd.DataFrame([result.x], columns=initial_c_i_prime.columns)
+                    for feat in self.data_interface.continuous_feature_names:
+                        perturbed_df.at[0, feat] = float(round(perturbed_df.at[0, feat]))
+                    perturbed_cfs.append(perturbed_df)
+                    valid_perturbation_found = True
+                else:
+                    std_dev = np.random.uniform(0.1, 0.6)
+                    #print(f"Optimization failed for the instances \n {c_i_df} \n {initial_guess}")
+                    perturbed_candidate = perturbation_instance.generate(c_i=c_i_df, std_dev=std_dev)
+                    is_valid_perturbation = perturbation_instance.validate(c_i_df, perturbed_candidate, target_class, self.predict_fn_scores)
+                    if is_valid_perturbation:
+                        perturbed_cfs.append(perturbed_candidate)
+                        valid_perturbation_found = True
+
+        if perturbed_cfs:
+            perturbed_cfs_df = pd.concat(perturbed_cfs, ignore_index=True)
+        else:
+            perturbed_cfs_df = pd.DataFrame(columns=input_instance.columns)
+
+        perturbed_cfs_df.reset_index(drop=True, inplace=True)
+        return perturbed_cfs_df
+
     def generate_perturbations(self, input_instance: pd.DataFrame, method: str, **kwargs) -> pd.DataFrame:
         """
         Generates perturbations for given counterfactual instances.
 
         Args:
-            cfs (pandas.DataFrame): Counterfactual instance that will be perturbed.
+            input_instance (pandas.DataFrame): Counterfactual instance that will be perturbed.
             method (str): Perturbation strategy. Supported methods:
                 - "gaussian" (GaussianPerturbation)
                 - "random" (RandomPerturbation)
                 - "spherical" (SphericalPerturbation)
+            **kwargs (dict): Additional arguments that will be passed to the perturbation generation method.
 
         Returns:
             pandas.DataFrame: Perturbed counterfactuals as pandas.DataFrame.
@@ -389,9 +486,28 @@ class DiceGenetic(ExplainerBase):
         return perturbed_cfs_df
     
 
+    def l2_objective(self, perturbed_df: pd.DataFrame, original_df: pd.DataFrame, predict_proba_fn: callable):
+        """
+        Computes the L2 loss of the model output for perturbations and the original counterfactals.
+
+        Args:
+            perturbed_df (pandas.DataFrame): The perturbed counterfactual as a DataFrame.
+            original_df (pandas.DataFrame): Original counterfactual as a DataFrame.
+            predict_proba_fn (callable): The prediction function that will return so-called probabilities
+
+        Returns:
+            float: The L2 loss value.
+        """
+        perturbed_pred = predict_proba_fn(perturbed_df)
+        original_pred = predict_proba_fn(original_df)
+
+        l2_loss = (perturbed_pred - original_pred) ** 2
+        return l2_loss
+
+
     def compute_robustness_loss(self, cfs: pd.DataFrame, perturbed_cfs: pd.DataFrame) -> float:
         """
-        Computes the robustness loss using Dice-Sørensen coefficient. Adapted from 
+        Computes the robustness loss using Dice-Sørensen coefficient. Adopted from 
         https://doi.org/10.48550/arXiv.2407.00843
 
         Args:
@@ -409,7 +525,7 @@ class DiceGenetic(ExplainerBase):
             raise ValueError(f"The number of rows in `cfs` doesn't match with the number of rows in `perturbed_cfs`")
         
         robustness_loss = 0.0
-        for (idx_c_i, c_i), (idx_c_i_prime, c_i_prime) in zip(cfs.iterrows(), perturbed_cfs.iterrows()):
+        for (_1, c_i), (_2, c_i_prime) in zip(cfs.iterrows(), perturbed_cfs.iterrows()):
             c_i_dict = c_i.to_dict()
             c_i_prime_dict = c_i_prime.to_dict()
 
@@ -466,7 +582,7 @@ class DiceGenetic(ExplainerBase):
     def compute_loss(self, cfs, desired_range, desired_class, perturbation_method: str, **kwargs):
         """Computes the overall loss"""
         input_instance = self.label_decode(cfs)
-        perturbed_cfs = self.generate_perturbations(input_instance, perturbation_method, **kwargs)
+        perturbed_cfs = self.generate_perturbations_hybrid(input_instance, perturbation_method, **kwargs)
 
         self.yloss = self.compute_yloss(cfs, desired_range, desired_class)
         self.proximity_loss = self.compute_proximity_loss(cfs, self.query_instance_normalized) \
@@ -619,7 +735,7 @@ class DiceGenetic(ExplainerBase):
                       'Diverse Counterfactuals found for the given configuation, perhaps ',
                       'change the query instance or the features to vary...'  '; total time taken: %02d' % m,
                       'min %02d' % s, 'sec')
-        return query_instance_df
+        return query_instance_df.reset_index(drop=True)
 
     def label_encode(self, input_instance):
         for column in self.data_interface.categorical_feature_names:

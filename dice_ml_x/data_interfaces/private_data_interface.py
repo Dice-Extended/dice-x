@@ -193,6 +193,23 @@ class PrivateData(_BaseData):
             for feature_name, feature_range in permitted_range_input.items():
                 ranges[feature_name] = feature_range
         return ranges, feature_ranges_orig
+    
+    def get_features_range_float(self, permitted_range_input=None, features_dict=None):
+        ranges = {}
+
+        for feature in self.continuous_feature_names:
+            ranges[feature] = [float(self.data_df[feature].min()),
+                               float(self.data_df[feature].max())]
+        for cat in self.categorical_feature_names:
+            cats_float = [float(idx) for idx, _ in enumerate(self.data_df[cat].unique().tolist())]
+            ranges[cat] = [min(cats_float), max(cats_float)]
+
+        feature_ranges_orig = ranges.copy()
+
+        if permitted_range_input is not None:
+            for feature_name, feature_range in permitted_range_input.items():
+                ranges[feature_name] = feature_range
+        return ranges, feature_ranges_orig
 
     def create_ohe_params(self, one_hot_encoded_data=None):
         if len(self.categorical_feature_names) > 0:

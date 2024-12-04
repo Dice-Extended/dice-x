@@ -62,7 +62,7 @@ class GaussianPerturbation(_BasePerturbation):
 
         return c_i_prime
     
-    def validate(self, c_i: pd.DataFrame, c_i_prime: pd.DataFrame, predict_fn: callable) -> bool:
+    def validate(self, c_i: pd.DataFrame, c_i_prime: pd.DataFrame, target_class: int, predict_fn: callable) -> bool:
         """
         Validates that the model outcomes the same output both for c_i the
         counterfactual instance and c_i_prime the perturbed counterfactual.
@@ -70,23 +70,18 @@ class GaussianPerturbation(_BasePerturbation):
         Args:
             c_i (pandas.DataFrame): The original counterfactual instance.
             c_i_prime (pandas.DataFrame): The perturbed counterfactual instance.
+            target_class (int): The target class
             predict_fn (callable): The prediction function of the model.
         Returns:
             bool: Boolean that indicates the validity of the perturbed counterfactual.
         """
         try:
-
-            # Predictions
             pred_c_i = predict_fn(c_i)
-
             pred_c_i_prime = predict_fn(c_i_prime)
-            return pred_c_i == pred_c_i_prime
-        except KeyError as e:
-            print(f"KeyError occurred: {e}, for c_i:\n {c_i.head()}\n, c_i_prime:\n {c_i_prime.head()}")
+            pred_c_i = pred_c_i[0][target_class]
+            pred_c_i_prime = pred_c_i_prime[0][target_class]
+            # Predictions
+            return np.abs(pred_c_i - pred_c_i_prime) <= 0.05
+        except Exception as e:
+            print(f"An exception occurred: {e}, for c_i:\n {c_i.head()}\n, c_i_prime:\n {c_i_prime.head()}")
             raise
-        """if len(pred_c_i.shape) > 1 and pred_c_i.shape[1] > 1:
-            print("validate if")
-            return np.argmax(pred_c_i) == np.argmax(pred_c_i_prime)
-        else:
-            print("validate else")
-            return pred_c_i == pred_c_i_prime"""
