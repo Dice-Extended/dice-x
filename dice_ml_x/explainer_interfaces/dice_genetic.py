@@ -412,7 +412,6 @@ class DiceGenetic(ExplainerBase):
 
                     pred_c_i_proba_class = pred_c_i_proba[0][target_class]
                     pred_c_i_prime_proba_class = pred_c_i_prime_proba[0][target_class]
-
                     loss = (pred_c_i_proba_class - pred_c_i_prime_proba_class) ** 2
                     return loss
             
@@ -432,9 +431,12 @@ class DiceGenetic(ExplainerBase):
                     valid_perturbation_found = True
                 else:
                     std_dev = np.random.uniform(0.1, 0.6)
+                    if method == 'gaussian':
+                        perturbation_instance.std_dev = std_dev
                     #print(f"Optimization failed for the instances \n {c_i_df} \n {initial_guess}")
-                    perturbed_candidate = perturbation_instance.generate(c_i=c_i_df, std_dev=std_dev)
-                    is_valid_perturbation = perturbation_instance.validate(c_i_df, perturbed_candidate, target_class, self.predict_fn_scores)
+                    perturbed_candidate = perturbation_instance.generate(c_i=c_i_df)
+                    is_valid_perturbation = perturbation_instance.validate(c_i_df, perturbed_candidate,
+                                                                           target_class, self.predict_fn_scores, 0.05)
                     if is_valid_perturbation:
                         perturbed_cfs.append(perturbed_candidate)
                         valid_perturbation_found = True
@@ -473,7 +475,7 @@ class DiceGenetic(ExplainerBase):
             while not valid_perturbation_found:
                 c_i_prime: pd.DataFrame = perturbation_instance.generate(c_i=c_i_df)
                 is_c_i_prime_valid = perturbation_instance.validate(c_i_df, c_i_prime,
-                                                                    self.predict_fn)
+                                                                    self.predict_fn, 0.05)
             
                 if is_c_i_prime_valid:
                     perturbed_cfs.append(c_i_prime)

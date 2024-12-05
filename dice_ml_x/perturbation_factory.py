@@ -49,7 +49,7 @@ class PerturbationFactory:
         strategy_map = {
             "gaussian": "dice_ml_x.perturbation_interfaces.gaussian_perturbation.GaussianPerturbation",
             "random": "dice_ml_x.perturbation_interfaces.random_perturbation.RandomPerturbation",
-            "spherical": "dice_ml_x.perturbation_interface.spherical_perturbation.SphericalPerturbation"
+            "spherical": "dice_ml_x.perturbation_interfaces.spherical_perturbation.SphericalPerturbation"
         }
 
         if method not in strategy_map.keys():

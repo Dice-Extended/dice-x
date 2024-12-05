@@ -12,9 +12,34 @@ class SphericalPerturbation(_BasePerturbation):
 
     Generates perturbations within a spherical boundary constructed around the
     given counterfactual instance.
+
+    Attributes:
+        radius (float): The radius of the sphere that will be generated around the data point.
+        continuous_features (list): List of continuous feature names.
+        categorical_features (dict): Dictionary of categorical features and their possible values.
+        feature_ranges (dict): Dictionary of feature ranges.
     """
-    def generate(self, c_i: pd.DataFrame, radius: float = 1.0, continuous_features: list = [],
-                 feature_ranges: dict = {}) -> pd.DataFrame:
+
+    def __init__(self, radius: float = 1.0, continuous_features: list = [],
+                 categorical_features: list = [], feature_ranges: dict = {}) -> None:
+        """
+        Initializes the required attributes for the generation and validation processes.
+
+        Args:
+            radius (float): The radius of the sphere that will be generated around the data point.
+            continuous_features (list): List of continuous feature names.
+            categorical_features (dict): Dictionary of categorical features and their possible values.
+            feature_ranges (dict): Dictionary of feature ranges.
+        
+        Returns:
+            None: Nothing is returned.
+        """
+        self.radius = radius
+        self.continuous_features = continuous_features
+        self.categorical_features = categorical_features
+        self.feature_ranges = feature_ranges
+
+    def generate(self, c_i: pd.DataFrame) -> pd.DataFrame:
         """
         Generates perturbations within a spherical boundary around the given counterfactual instance.
 
@@ -26,31 +51,20 @@ class SphericalPerturbation(_BasePerturbation):
         Returns:
             pandas.DataFrame: A perturbed version of the given counterfactual explanation.
         """
-        c_i_prime = c_i.copy()
+        c_i_prime = c_i.copy().reset_index(drop=True)
 
-        for feature in continuous_features:
+        for feature in self.continuous_features:
             if feature in c_i.columns:
-                current_value = c_i[feature].values[0]
-                feature_min = max(feature_ranges[feature][0], 0, current_value)
-                feature_max = feature_ranges[feature][1]
-                scaled_radius = radius * (feature_max - feature_min)
-                low = max(current_value - scaled_radius, feature_min)
-                high = min(current_value - scaled_radius, feature_max)
-                c_i_prime[feature] = np.random.uniform(low, high)
+                feature_min, feature_max = self.feature_ranges.get(feature, (0, 1))
+                scaled_radius = self.radius * (feature_max - feature_min)
+                perturbation = np.random.uniform(-scaled_radius, scaled_radius)
+                c_i_prime[feature] += perturbation
+                c_i_prime[feature] = np.clip(c_i_prime[feature], feature_min, feature_max)
 
+        for cat_feat, cat_vals in self.categorical_features.items():
+            if cat_feat in c_i.columns:
+                current_val = c_i[cat_feat].values[0]
+                valid_vals = list(set(cat_vals) - set([current_val]))
+                if valid_vals and np.random.rand() < 0.5:
+                    c_i_prime.at[0, cat_feat] = np.random.choice(valid_vals)
         return c_i_prime
-    
-
-    def validate(self, c_i: pd.DataFrame, c_i_prime: pd.DataFrame, model: any) -> bool:
-        """
-        Validates that the model outcomes the same output both for c_i the
-        counterfactual instance and c_i_prime the perturbed counterfactual.
-
-        Args:
-            c_i (pandas.DataFrame): The original counterfactual instance.
-            c_i_prime (pandas.DataFrame): The perturbed counterfactual instance.
-            model (any): The model to validate against.
-        Returns:
-            bool: Boolean that indicates the validity of the perturbed counterfactual.
-        """
-        return model.predict(c_i) == model.predict(c_i_prime)

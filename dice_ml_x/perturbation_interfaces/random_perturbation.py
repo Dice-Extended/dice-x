@@ -14,8 +14,12 @@ class RandomPerturbation(_BasePerturbation):
     Perturbs the continuous features randomly within a given range and modifies
     the categorical features.
     """
-    def generate(self, c_i: pd.DataFrame, continuous_features: list = [],
-                  categorical_features: dict = {}, feature_ranges: dict = {}) -> pd.DataFrame:
+    def __init__(self, continuous_features: list = [], categorical_features: dict = {}, feature_ranges: dict = {}) -> None:
+        self.continuous_features = continuous_features
+        self.categorical_features = categorical_features
+        self.feature_ranges = feature_ranges
+
+    def generate(self, c_i: pd.DataFrame) -> pd.DataFrame:
         """
         Generates random perturbations for both continuous and categorical features.
 
@@ -28,29 +32,14 @@ class RandomPerturbation(_BasePerturbation):
         """
         c_i_prime = c_i.copy()
 
-        for feature in continuous_features:
+        for feature in self.continuous_features:
             if feature in c_i.columns:
-                low, high = feature_ranges.get(feature, (0, 1))
+                low, high = self.feature_ranges.get(feature, (0, 1))
                 c_i_prime[feature] = np.random.uniform(low, high)
 
         
-        for cat_feature, cats in categorical_features.items():
+        for cat_feature, cat_vals in self.categorical_features.items():
             if cat_feature in c_i.columns:
-                c_i_prime[cat_feature] = np.random.choice(cats)
+                c_i_prime[cat_feature] = np.random.choice(cat_vals)
 
         return c_i_prime
-    
-
-    def validate(self, c_i: pd.DataFrame, c_i_prime: pd.DataFrame, model: any) -> bool:
-        """
-        Validates that the model outcomes the same output both for c_i the
-        counterfactual instance and c_i_prime the perturbed counterfactual.
-
-        Args:
-            c_i (pandas.DataFrame): The original counterfactual instance.
-            c_i_prime (pandas.DataFrame): The perturbed counterfactual instance.
-            model (any): The model to validate against.
-        Returns:
-            bool: Boolean that indicates the validity of the perturbed counterfactual.
-        """
-        return model.predict(c_i) == model.predict(c_i_prime)

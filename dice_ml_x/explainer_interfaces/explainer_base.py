@@ -192,7 +192,6 @@ class ExplainerBase(ABC):
                 stopping_threshold=stopping_threshold,
                 posthoc_sparsity_param=posthoc_sparsity_param,
                 posthoc_sparsity_algorithm=posthoc_sparsity_algorithm,
-                perturbation_method="gaussian",
                 verbose=verbose,
                 **kwargs)
             res.test_instance_df = self.data_interface.ensure_consistent_type(
