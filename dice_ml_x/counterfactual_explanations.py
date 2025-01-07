@@ -103,6 +103,12 @@ class CounterfactualExplanations:
             cf_examples.visualize_as_dataframe(
                     display_sparse_df=display_sparse_df,
                     show_only_changes=show_only_changes)
+            
+
+    def to_dataframe(self):
+        for cf_examples in self.cf_examples_list:
+            df = cf_examples.to_dataframe()
+        return df
 
     def visualize_as_list(self, display_sparse_df=True,
                           show_only_changes=False):

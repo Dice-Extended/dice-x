@@ -4,13 +4,19 @@ Module to generate diverse counterfactual explanations based on tensorflow 2.x
 import copy
 import random
 import timeit
+# To suppress TensorFlow warning about the optimizer running slowly on Apple chips.
+import absl.logging
+from sklearn.preprocessing import OneHotEncoder
+absl.logging.set_verbosity(absl.logging.ERROR)
 
 import numpy as np
+import pandas as pd
 import tensorflow as tf
 
 from dice_ml_x import diverse_counterfactuals as exp
 from dice_ml_x.counterfactual_explanations import CounterfactualExplanations
 from dice_ml_x.explainer_interfaces.explainer_base import ExplainerBase
+from dice_ml_x.perturbation_factory import PerturbationFactory
 
 
 class DiceTensorFlow2(ExplainerBase):
@@ -46,17 +52,18 @@ class DiceTensorFlow2(ExplainerBase):
         self.cf_init_weights = []  # total_CFs, algorithm, features_to_vary
         self.loss_weights = []  # yloss_type, diversity_loss_type, feature_weights
         self.feature_weights_input = ''
-        self.hyperparameters = [1, 1, 1]  # proximity_weight, diversity_weight, categorical_penalty
+        self.hyperparameters = [1, 1, 1, 1]  # proximity_weight, diversity_weight, categorical_penalty
         self.optimizer_weights = []  # optimizer, learning_rate
 
     def generate_counterfactuals(self, query_instance, total_CFs, desired_class="opposite", proximity_weight=0.5,
-                                 diversity_weight=1.0, categorical_penalty=0.1, algorithm="DiverseCF",
+                                 diversity_weight=1.0, robustness_weight=0.5, categorical_penalty=0.1, algorithm="DiverseCF",
                                  features_to_vary="all", permitted_range=None, yloss_type="hinge_loss",
                                  diversity_loss_type="dpp_style:inverse_dist", feature_weights="inverse_mad",
                                  optimizer="tensorflow:adam", learning_rate=0.05, min_iter=500, max_iter=5000,
                                  project_iter=0, loss_diff_thres=1e-5, loss_converge_maxiter=1, verbose=False,
                                  init_near_query_instance=True, tie_random=False, stopping_threshold=0.5,
-                                 posthoc_sparsity_param=0.1, posthoc_sparsity_algorithm="linear", limit_steps_ls=10000):
+                                 posthoc_sparsity_param=0.1, posthoc_sparsity_algorithm="linear", limit_steps_ls=10000,
+                                 perturbation_method="gaussian", **kwargs):
         """Generates diverse counterfactual explanations
 
         :param query_instance: Test point of interest. A dictionary of feature names and values or a single row dataframe
@@ -126,15 +133,16 @@ class DiceTensorFlow2(ExplainerBase):
         self.do_cf_initializations(total_CFs, algorithm, features_to_vary)
         if [yloss_type, diversity_loss_type, feature_weights] != self.loss_weights:
             self.do_loss_initializations(yloss_type, diversity_loss_type, feature_weights)
-        if [proximity_weight, diversity_weight, categorical_penalty] != self.hyperparameters:
-            self.update_hyperparameters(proximity_weight, diversity_weight, categorical_penalty)
+        if [proximity_weight, diversity_weight, robustness_weight, categorical_penalty] != self.hyperparameters:
+            self.update_hyperparameters(proximity_weight, diversity_weight, robustness_weight, categorical_penalty)
 
         final_cfs_df, test_instance_df, final_cfs_df_sparse = \
             self.find_counterfactuals(query_instance, desired_class, optimizer,
                                       learning_rate, min_iter, max_iter, project_iter,
                                       loss_diff_thres, loss_converge_maxiter, verbose,
                                       init_near_query_instance, tie_random, stopping_threshold,
-                                      posthoc_sparsity_param, posthoc_sparsity_algorithm, limit_steps_ls)
+                                      posthoc_sparsity_param, posthoc_sparsity_algorithm, limit_steps_ls,
+                                      perturbation_method, **kwargs)
 
         counterfactual_explanations = exp.CounterfactualExamples(
             data_interface=self.data_interface,
@@ -150,6 +158,9 @@ class DiceTensorFlow2(ExplainerBase):
         """prediction function"""
         temp_preds = self.model.get_output(input_instance).numpy()
         return np.array([preds[(self.num_output_nodes-1):] for preds in temp_preds], dtype=np.float32)
+    
+    def predict_fn_with_grads(self, input_instance):
+        return self.model.model(input_instance, training=False)
 
     def predict_fn_for_sparsity(self, input_instance):
         """prediction function for sparsity correction"""
@@ -181,6 +192,8 @@ class DiceTensorFlow2(ExplainerBase):
             for _ in range(self.total_CFs):
                 one_init = [[]]
                 for jx in range(self.minx.shape[1]):
+                    min_val = self.minx[0][jx]
+                    max_val = self.maxx[0][jx]
                     one_init[0].append(np.random.uniform(self.minx[0][jx], self.maxx[0][jx]))
                 self.cfs.append(tf.Variable(one_init, dtype=tf.float32))
 
@@ -210,12 +223,13 @@ class DiceTensorFlow2(ExplainerBase):
                     feature_weights_list.append(1.0)
             self.feature_weights_list = tf.constant([feature_weights_list], dtype=tf.float32)
 
-    def update_hyperparameters(self, proximity_weight, diversity_weight, categorical_penalty):
+    def update_hyperparameters(self, proximity_weight, diversity_weight, robustness_weight, categorical_penalty):
         """Update hyperparameters of the loss function"""
 
         self.hyperparameters = [proximity_weight, diversity_weight, categorical_penalty]
         self.proximity_weight = proximity_weight
         self.diversity_weight = diversity_weight
+        self.robustness_weight = robustness_weight
         self.categorical_penalty = categorical_penalty
 
     def do_optimizer_initializations(self, optimizer, learning_rate):
@@ -227,6 +241,173 @@ class DiceTensorFlow2(ExplainerBase):
             self.optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=learning_rate)
         elif opt_method == "rmsprop":
             self.optimizer = tf.compat.v1.train.RMSPropOptimizer(learning_rate=learning_rate)
+
+
+    @tf.function
+    def optimize_perturbations(self, c_i_prime_numerical, c_i_numerical, gamma):
+       #print(f"c_i_prime_numerical shape: {c_i_prime_numerical.shape}")
+        with tf.GradientTape() as tape:
+            tape.watch(c_i_prime_numerical)
+            pred_i = self.predict_fn_with_grads(c_i_numerical)
+            pred_i_prime = self.predict_fn_with_grads(c_i_prime_numerical)
+            class_loss = tf.reduce_mean((pred_i - pred_i_prime) ** 2)
+            distance = tf.norm(c_i_prime_numerical - c_i_numerical, ord=2)
+            loss = class_loss - gamma * distance
+        grads = tape.gradient(loss, [c_i_prime_numerical])
+        
+        return loss, grads
+    
+    def generate_perturbations_vectorized(self, method: str, max_iter=100, tol=1e-3, gamma=1e-2, **kwargs):
+        perturbation_instance = PerturbationFactory.get_perturbation(method, **kwargs)
+        perturbed_cfs = []
+        cfs = np.array([self.cfs[i][0] for i in range(len(self.cfs))])
+        
+        cfs_df: pd.DataFrame = self.model.transformer.inverse_transform(
+               self.data_interface.get_decoded_data(cfs))
+        for _, c_i in cfs_df.iterrows():
+            c_i_df = pd.DataFrame([c_i])
+            c_i_prime_df = perturbation_instance.generate(c_i=c_i_df)
+            perturbed_cfs.append(c_i_prime_df)
+
+        
+        cf_numerical = tf.constant(cfs, dtype=tf.float32)
+        perturbed_cfs_df = pd.concat(perturbed_cfs, ignore_index=True)
+        cf_prime_numerical = tf.Variable(self.model.transformer.transform(perturbed_cfs_df), dtype=tf.float32, trainable=True)
+        optimizer = tf.keras.optimizers.AdamW(learning_rate=1e-2)
+        optimized_c_i_prime = None
+        prev_loss = np.inf
+
+        for it in range(max_iter):
+            loss, grads = self.optimize_perturbations(cf_prime_numerical, cf_numerical, gamma)
+            optimizer.apply_gradients(zip(grads, [cf_prime_numerical]))
+            
+            if abs(loss.numpy() - prev_loss) < tol: 
+                prev_loss = loss.numpy()
+                break
+
+        optimized_c_i_prime = pd.DataFrame(
+            self.model.transformer.inverse_transform(
+            self.data_interface.get_decoded_data(cf_prime_numerical.numpy())),
+        columns=cfs_df.columns)
+        return optimized_c_i_prime
+
+    def generate_perturbations(self, method: str, max_iter=100,
+                               tol=1e-3, gamma=1e-2, **kwargs) -> pd.DataFrame:
+        perturbation_instance = PerturbationFactory.get_perturbation(method, **kwargs)
+        perturbed_cfs = []
+        cfs = np.array([self.cfs[i][0] for i in range(len(self.cfs))])
+        
+        cfs_df: pd.DataFrame = self.model.transformer.inverse_transform(
+               self.data_interface.get_decoded_data(cfs))
+        optimized_c_i_prime = None
+        for idx, c_i in cfs_df.iterrows():
+            c_i_df = pd.DataFrame([c_i])
+            c_i_numerical = tf.constant(self.cfs[idx], dtype=tf.float32)
+            
+            c_i_prime_df = perturbation_instance.generate(c_i=c_i_df)
+            c_i_prime_numerical = tf.Variable(self.model.transformer.transform(c_i_prime_df),
+                                            dtype=tf.float32, trainable=True)
+            
+            perturbation_optimizer = tf.keras.optimizers.AdamW(learning_rate=1e-2)
+            perturbation_optimizer.build([c_i_prime_numerical])
+            prev_loss = np.inf
+            
+            for it in range(max_iter):
+                
+                with tf.GradientTape() as tape:
+                    tape.watch(c_i_prime_numerical)
+                    pred_i = self.predict_fn_with_grads(c_i_numerical)
+                    pred_i_prime = self.predict_fn_with_grads(c_i_prime_numerical)
+                    class_loss = tf.reduce_mean((pred_i - pred_i_prime) ** 2)
+                    distance = tf.norm(c_i_prime_numerical - c_i_numerical, ord=2)
+                    loss = class_loss - gamma * distance
+                grads = tape.gradient(loss, [c_i_prime_numerical])
+
+                grads *= self.freezer
+
+                if grads is None:
+                    break
+                
+                perturbation_optimizer.apply_gradients(zip(grads, [c_i_prime_numerical]))
+                
+                if abs(loss.numpy() - prev_loss) < tol:
+                    break
+                
+                prev_loss = loss.numpy()
+                
+            optimized_c_i_prime = pd.DataFrame(
+                self.model.transformer.inverse_transform(
+                self.data_interface.get_decoded_data(c_i_prime_numerical.numpy())
+            ), columns=cfs_df.columns)        
+            perturbed_cfs.append(optimized_c_i_prime)
+        perturbed_cfs_df = pd.concat(perturbed_cfs, ignore_index=True)
+        return perturbed_cfs_df
+    
+    def _preprocess_for_robustness(self, cfs: pd.DataFrame, perturbed_cfs: pd.DataFrame) -> tuple:
+
+        continuous_cols = self.data_interface.continuous_feature_names
+        categorical_cols = self.data_interface.categorical_feature_names
+
+        def preprocess_continuous_features(data: pd.DataFrame):
+            binarized = []
+            ranges = self.data_interface.get_features_range_float()[1]
+
+            for col in continuous_cols:
+                col_min, col_max = ranges[col]
+                num_bins = 10
+                bins = np.linspace(col_min, col_max, num=num_bins + 1)
+                binned = np.digitize(data[col], bins, right=False)
+                binned = np.clip(binned, 0, len(bins) - 1)
+                one_hot = np.eye(len(bins))[binned]
+                binarized.append(one_hot)
+            return np.hstack(binarized)
+        
+        combined_data = pd.concat([cfs, perturbed_cfs])
+        combined_data[categorical_cols] = combined_data[categorical_cols].astype("str")
+        encoder = OneHotEncoder(sparse_output=False, handle_unknown="ignore")
+        encoder.fit(combined_data[categorical_cols])
+        
+        def preprocess_categorical_features(p_data: pd.DataFrame):
+            p_data[categorical_cols] = p_data[categorical_cols].astype("str")
+            encoded = encoder.transform(p_data[categorical_cols])
+            return encoded
+        
+        cfs_continuous = preprocess_continuous_features(cfs)
+        cfs_categorical = preprocess_categorical_features(cfs)
+        
+        perturbed_cfs_continuous = preprocess_continuous_features(perturbed_cfs)
+        perturbed_cfs_categorical = preprocess_categorical_features(perturbed_cfs)
+
+        cfs_processed = np.hstack([cfs_continuous, cfs_categorical])
+        perturbed_cfs_processed = np.hstack([perturbed_cfs_continuous, perturbed_cfs_categorical])
+
+        return cfs_processed, perturbed_cfs_processed
+
+    def compute_robustness_loss(self, perturbed_cfs_df: pd.DataFrame) -> float:
+        """
+        Computes the robustness loss.
+        Args:
+            perturbed_cfs_df (pandas.DataFrame): The perturbed counterfactuals that will
+            be compared against the original counterfactual instances.
+        Returns:
+            float: Robustness loss in scalar.
+        """
+        robustness_loss = 0.0
+        cfs = np.array([self.cfs[i][0] for i in range(len(self.cfs))])
+        cfs_df = self.model.transformer.inverse_transform(self.data_interface.get_decoded_data(cfs))
+
+        cfs_processed, perturbed_cfs_processed = self._preprocess_for_robustness(cfs_df, perturbed_cfs_df)
+
+        intersection = np.sum(np.minimum(cfs_processed, perturbed_cfs_processed), axis=1)
+        union = np.sum(cfs_processed, axis=1) + np.sum(perturbed_cfs_processed, axis=1)
+
+
+        epsilon = 1e-8
+        sorensen_dice_coefficient = (2 * intersection) / (union + epsilon)
+        sorensen_dice_coefficient[np.isnan(sorensen_dice_coefficient)] = 1.0
+
+        return tf.cast(tf.reduce_mean(sorensen_dice_coefficient), dtype=tf.float32)
+    
 
     def compute_yloss(self):
         """Computes the first part (y-loss) of the loss function."""
@@ -317,15 +498,19 @@ class DiceTensorFlow2(ExplainerBase):
 
         return regularization_loss
 
-    def compute_loss(self):
+    def compute_loss(self, perturbation_method: str, **kwargs):
         """Computes the overall loss"""
+        perturbed_cfs_df = self.generate_perturbations_vectorized(method=perturbation_method,
+                                                    **kwargs)
+
         self.yloss = self.compute_yloss()
         self.proximity_loss = self.compute_proximity_loss() if self.proximity_weight > 0 else 0.0
         self.diversity_loss = self.compute_diversity_loss() if self.diversity_weight > 0 else 0.0
+        self.robustness_loss = self.compute_robustness_loss(perturbed_cfs_df=perturbed_cfs_df) if self.robustness_weight > 0 else 0.0
         self.regularization_loss = self.compute_regularization_loss()
-
         self.loss = self.yloss + (self.proximity_weight * self.proximity_loss) - \
-            (self.diversity_weight * self.diversity_loss) + \
+            (self.diversity_weight * self.diversity_loss) - \
+            (self.robustness_weight * self.robustness_loss) + \
             (self.categorical_penalty * self.regularization_loss)
         return self.loss
 
@@ -396,7 +581,7 @@ class DiceTensorFlow2(ExplainerBase):
         # stop GD if max iter is reached
         if itr >= self.max_iter:
             return True
-
+        
         # else stop when loss diff is small & all CFs are valid (less or greater than a stopping threshold)
         if loss_diff <= self.loss_diff_thres:
             self.loss_converge_iter += 1
@@ -421,7 +606,7 @@ class DiceTensorFlow2(ExplainerBase):
     def find_counterfactuals(self, query_instance, desired_class, optimizer, learning_rate, min_iter,
                              max_iter, project_iter, loss_diff_thres, loss_converge_maxiter, verbose,
                              init_near_query_instance, tie_random, stopping_threshold, posthoc_sparsity_param,
-                             posthoc_sparsity_algorithm, limit_steps_ls):
+                             posthoc_sparsity_algorithm, limit_steps_ls, perturbation_method: str, **kwargs):
         """Finds counterfactuals by gradient-descent."""
 
         query_instance = self.model.transformer.transform(query_instance).to_numpy()
@@ -482,8 +667,8 @@ class DiceTensorFlow2(ExplainerBase):
 
                 # compute loss and tape the variables history
                 with tf.GradientTape() as tape:
-                    loss_value = self.compute_loss()
-
+                    loss_value = self.compute_loss(perturbation_method=perturbation_method, **kwargs)
+                
                 # get gradients
                 grads = tape.gradient(loss_value, self.cfs)
 
@@ -537,7 +722,7 @@ class DiceTensorFlow2(ExplainerBase):
 
         self.elapsed = timeit.default_timer() - start_time
         self.cfs_preds = [self.predict_fn(tf.constant(cfs, dtype=tf.float32)) for cfs in self.final_cfs]
-
+    
         # update final_cfs from backed up CFs if valid CFs are not found
         if ((self.target_cf_class == 0 and any(i[0] > self.stopping_threshold for i in self.cfs_preds)) or
            (self.target_cf_class == 1 and any(i[0] < self.stopping_threshold for i in self.cfs_preds))):
@@ -547,10 +732,14 @@ class DiceTensorFlow2(ExplainerBase):
                         self.final_cfs[loop_ix+ix] = copy.deepcopy(self.best_backup_cfs[loop_ix+ix])
                         self.cfs_preds[loop_ix+ix] = copy.deepcopy(self.best_backup_cfs_preds[loop_ix+ix])
 
+        
+        
         # do inverse transform of CFs to original user-fed format
         cfs = np.array([self.final_cfs[i][0] for i in range(len(self.final_cfs))])
+        
         final_cfs_df = self.model.transformer.inverse_transform(
                self.data_interface.get_decoded_data(cfs))
+
         cfs_preds = [np.round(preds.flatten().tolist(), 3) for preds in self.cfs_preds]
         cfs_preds = [item for sublist in cfs_preds for item in sublist]
         final_cfs_df[self.data_interface.outcome_name] = np.array(cfs_preds)

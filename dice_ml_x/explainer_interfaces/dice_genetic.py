@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 from raiutils.exceptions import UserConfigValidationException
 import scipy.optimize as opt
+from sklearn.preprocessing import OneHotEncoder
 
 from dice_ml_x import diverse_counterfactuals as exp
 from dice_ml_x.constants import ModelTypes
@@ -35,6 +36,14 @@ class DiceGenetic(ExplainerBase):
         self.cf_init_weights = []  # total_CFs, algorithm, features_to_vary
         self.loss_weights = []  # yloss_type, diversity_loss_type, feature_weights
         self.feature_weights_input = ''
+        self.loss_history = {
+            "iterations": [],
+            "y_loss": [],
+            "sparsity_loss": [],
+            "proximity_loss": [],
+            "robustness_loss": [],
+            "total_loss": [] 
+        }
 
         # Initializing a label encoder to obtain label-encoded values for categorical variables
         self.labelencoder = self.data_interface.fit_label_encoders()
@@ -208,7 +217,7 @@ class DiceGenetic(ExplainerBase):
 
     def _generate_counterfactuals(self, query_instance, total_CFs, perturbation_method, initialization="kdtree",
                                   desired_range=None, desired_class="opposite", proximity_weight=0.2,
-                                  sparsity_weight=0.2, diversity_weight=5.0, robustness_weight=0.2,
+                                  sparsity_weight=0.2, diversity_weight=4.0, robustness_weight=0.2,
                                   categorical_penalty=0.1, algorithm="DiverseCF", features_to_vary="all",
                                   permitted_range=None, yloss_type="hinge_loss", diversity_loss_type="dpp_style:inverse_dist",
                                   feature_weights="inverse_mad", stopping_threshold=0.5, posthoc_sparsity_param=0.1,
@@ -367,6 +376,7 @@ class DiceGenetic(ExplainerBase):
             tol (float): Tolerance for convergence.
             max_attempts (int): Maximum number of attempts if the optimization fails.
             **kwargs (dict): Additional arguments that will be passed to the perturbation generation method.
+            
         Returns:
             pandas.DataFrame: Perturbed counterfactuals as pandas.DataFrame.
         """
@@ -375,8 +385,9 @@ class DiceGenetic(ExplainerBase):
 
         for idx, c_i in input_instance.iterrows():
             c_i_df = pd.DataFrame([c_i])
+            c_i_numerical = self.label_encode(c_i_df.copy())
+            
             pred_c_i_df = self.predict_fn_scores(c_i_df)
-
             target_class = np.argmax(pred_c_i_df)
 
             attempt_cnt = 0
@@ -414,6 +425,30 @@ class DiceGenetic(ExplainerBase):
                     pred_c_i_prime_proba_class = pred_c_i_prime_proba[0][target_class]
                     loss = (pred_c_i_proba_class - pred_c_i_prime_proba_class) ** 2
                     return loss
+                
+                def jacobian_objective(perturbed_values: np.ndarray) -> np.ndarray:
+                    """Computes the Jacobian matrix for trust region"""
+                    perturbed_vals_df = pd.DataFrame([perturbed_values], columns=c_i_df.columns)
+                    
+                    for cat in self.data_interface.categorical_feature_names:
+                        if cat in perturbed_vals_df.columns:
+                            category_idx = int(round(perturbed_vals_df.at[0, cat]))
+                            category_idx = np.clip(category_idx, 0, len(categorical_ranges[cat]))
+                            perturbed_vals_df.at[0, cat] = categorical_ranges[cat][category_idx]
+
+                    pred_c_i_proba = self.predict_fn_scores(c_i_df)
+                    pred_c_i_prime_proba = self.predict_fn_scores(perturbed_vals_df)
+
+                    pred_c_i_proba_class = pred_c_i_proba[0][target_class]
+                    pred_c_i_prime_proba_class = pred_c_i_prime_proba[0][target_class]
+                    grad = 2 * (pred_c_i_proba_class - pred_c_i_prime_proba_class) * np.sign(perturbed_values - c_i_numerical.iloc[0].values)
+                    return grad
+                
+
+                def hessian_objective(perturbed_values: np.ndarray) -> np.ndarray:
+                    """Computes the Hessian matrix for trust region"""
+                    return 2 * np.eye(len(perturbed_values))
+                    
             
                 result = opt.minimize(
                     fun=l2_objective,
@@ -422,6 +457,15 @@ class DiceGenetic(ExplainerBase):
                     method="L-BFGS-B",
                     options={'maxiter': max_iter, 'disp': False}
                 )
+
+                '''result = opt.minimize(
+                    fun=l2_objective,
+                    x0=initial_guess,
+                    bounds=bounds,
+                    method="trust-exact",
+                    jac=jacobian_objective,
+                    hess=hessian_objective
+                )'''
 
                 if (result.success and result.fun <= tol):
                     perturbed_df = pd.DataFrame([result.x], columns=initial_c_i_prime.columns)
@@ -436,7 +480,7 @@ class DiceGenetic(ExplainerBase):
                     #print(f"Optimization failed for the instances \n {c_i_df} \n {initial_guess}")
                     perturbed_candidate = perturbation_instance.generate(c_i=c_i_df)
                     is_valid_perturbation = perturbation_instance.validate(c_i_df, perturbed_candidate,
-                                                                           target_class, self.predict_fn_scores, 0.05)
+                                                                           target_class, self.predict_fn_scores, 0.1)
                     if is_valid_perturbation:
                         perturbed_cfs.append(perturbed_candidate)
                         valid_perturbation_found = True
@@ -505,7 +549,46 @@ class DiceGenetic(ExplainerBase):
 
         l2_loss = (perturbed_pred - original_pred) ** 2
         return l2_loss
+    
+    def _preprocess_for_robustness(self, cfs: pd.DataFrame, perturbed_cfs: pd.DataFrame) -> tuple:
 
+        continuous_cols = self.data_interface.continuous_feature_names
+        categorical_cols = self.data_interface.categorical_feature_names
+
+        def preprocess_continuous_features(data: pd.DataFrame):
+            binarized = []
+            ranges = self.data_interface.get_features_range_float()[1]
+
+            for col in continuous_cols:
+                col_min, col_max = ranges[col]
+                num_bins = 10
+                bins = np.linspace(col_min, col_max, num=num_bins + 1)
+                binned = np.digitize(data[col], bins, right=False)
+                binned = np.clip(binned, 0, len(bins) - 1)
+                one_hot = np.eye(len(bins))[binned]
+                binarized.append(one_hot)
+            return np.hstack(binarized)
+        
+        combined_data = pd.concat([cfs, perturbed_cfs])
+        combined_data[categorical_cols] = combined_data[categorical_cols].astype("str")
+        encoder = OneHotEncoder(sparse_output=False, handle_unknown="ignore")
+        encoder.fit(combined_data[categorical_cols])
+        
+        def preprocess_categorical_features(p_data: pd.DataFrame):
+            p_data[categorical_cols] = p_data[categorical_cols].astype("str")
+            encoded = encoder.transform(p_data[categorical_cols])
+            return encoded
+        
+        cfs_continuous = preprocess_continuous_features(cfs)
+        cfs_categorical = preprocess_categorical_features(cfs)
+        
+        perturbed_cfs_continuous = preprocess_continuous_features(perturbed_cfs)
+        perturbed_cfs_categorical = preprocess_categorical_features(perturbed_cfs)
+
+        cfs_processed = np.hstack([cfs_continuous, cfs_categorical])
+        perturbed_cfs_processed = np.hstack([perturbed_cfs_continuous, perturbed_cfs_categorical])
+
+        return cfs_processed, perturbed_cfs_processed
 
     def compute_robustness_loss(self, cfs: pd.DataFrame, perturbed_cfs: pd.DataFrame) -> float:
         """
@@ -525,16 +608,23 @@ class DiceGenetic(ExplainerBase):
         
         if len(cfs) != len(perturbed_cfs):
             raise ValueError(f"The number of rows in `cfs` doesn't match with the number of rows in `perturbed_cfs`")
-        
+    
         robustness_loss = 0.0
-        for (_1, c_i), (_2, c_i_prime) in zip(cfs.iterrows(), perturbed_cfs.iterrows()):
-            c_i_dict = c_i.to_dict()
-            c_i_prime_dict = c_i_prime.to_dict()
+        cfs_processed, perturbed_cfs_processed = self._preprocess_for_robustness(cfs, perturbed_cfs)
 
-            intersection = len(set(c_i_dict.items()) & set(c_i_prime_dict.items()))
-            union = len(c_i_dict) + len(c_i_prime_dict)
+        intersection = np.sum(np.minimum(cfs_processed, perturbed_cfs_processed), axis=1)
+        union = np.sum(cfs_processed, axis=1) + np.sum(perturbed_cfs_processed, axis=1)
 
-            robustness_loss += 1 - (2 * intersection / union)
+        sorensen_dice_coefficient = (2 * intersection) / union
+        sorensen_dice_coefficient[np.isnan(sorensen_dice_coefficient)] = 1.0
+
+        return sorensen_dice_coefficient
+    
+        for c_i, c_i_prime in zip(cfs_processed, perturbed_cfs_processed):
+            intersection = np.sum(np.minimum(c_i, c_i_prime))
+            union = np.sum(c_i) + np.sum(c_i_prime)
+            sorensen_dice_coefficient = (2 * intersection) / union if union > 0 else 1.0
+            robustness_loss += sorensen_dice_coefficient
 
         return robustness_loss / len(cfs)
 
@@ -588,9 +678,9 @@ class DiceGenetic(ExplainerBase):
 
         self.yloss = self.compute_yloss(cfs, desired_range, desired_class)
         self.proximity_loss = self.compute_proximity_loss(cfs, self.query_instance_normalized) \
-            if self.proximity_weight > 0 else 0.0
-        self.sparsity_loss = self.compute_sparsity_loss(cfs) if self.sparsity_weight > 0 else 0.0
-        self.robustness_loss = self.compute_robustness_loss(input_instance, perturbed_cfs) if self.robustness_weight > 0 else 0.0
+            if self.proximity_weight > 0 else np.zeros(len(cfs))
+        self.sparsity_loss = self.compute_sparsity_loss(cfs) if self.sparsity_weight > 0 else np.zeros(len(cfs))
+        self.robustness_loss = self.compute_robustness_loss(input_instance, perturbed_cfs) if self.robustness_weight > 0 else np.zeros(len(cfs))
         self.loss = np.reshape(np.array(self.yloss + (self.proximity_weight * self.proximity_loss) +
                                         self.sparsity_weight * self.sparsity_loss - 
                                         self.robustness_weight * self.robustness_loss), (-1, 1))
@@ -627,10 +717,23 @@ class DiceGenetic(ExplainerBase):
                 else:
                     one_init[j] = query_instance[j]
         return one_init
+    
+    def _reset_loss_history(self):
+        self.loss_history = {key: [] for key in self.loss_history}
+
+    def _populate_loss_history(self, it, y_loss, sparsity_loss, proximity_loss, robustness_loss, total_loss):
+        self.loss_history["iterations"].append(it)
+        self.loss_history["y_loss"].append(y_loss.mean())
+        self.loss_history["sparsity_loss"].append(sparsity_loss.mean())
+        self.loss_history["proximity_loss"].append(proximity_loss.mean())
+        self.loss_history["robustness_loss"].append(robustness_loss if type(self.robustness_loss) == float else robustness_loss.mean())
+        self.loss_history["total_loss"].append(total_loss.mean())
+
 
     def find_counterfactuals(self, query_instance, desired_range, desired_class, perturbation_method,
                              features_to_vary, maxiterations, thresh, verbose, **kwargs):
         """Finds counterfactuals by generating cfs through the genetic algorithm"""
+        self._reset_loss_history()
         population = self.cfs.copy()
         iterations = 0
         previous_best_loss = -np.inf
@@ -657,9 +760,11 @@ class DiceGenetic(ExplainerBase):
             previous_best_loss = current_best_loss
             population = np.unique(tuple(map(tuple, population)), axis=0)
             population_fitness = self.compute_loss(population, desired_range, desired_class, perturbation_method, **kwargs)
+
             population_fitness = population_fitness[population_fitness[:, 1].argsort()]
 
             current_best_loss = population_fitness[0][1]
+            self._populate_loss_history(iterations, self.yloss, self.sparsity_loss, self.proximity_loss, self.robustness_loss, current_best_loss)
             to_pred = np.array([population[int(tup[0])] for tup in population_fitness[:self.total_CFs]])
 
             if self.total_CFs > 0:

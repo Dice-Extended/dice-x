@@ -150,6 +150,10 @@ class CounterfactualExamples:
                             newdf[ix][jx] = str(newdf[ix][jx])
             display(pd.DataFrame(newdf, columns=df.columns, index=df.index))  # works only in Jupyter notebook
 
+
+    def to_dataframe(self):
+        return self.final_cfs_df
+
     def visualize_as_list(self, display_sparse_df=True, show_only_changes=False):
         # original instance
         print('Query instance (original outcome : {})'.format(self.test_pred))

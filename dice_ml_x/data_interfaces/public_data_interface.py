@@ -245,11 +245,10 @@ class PublicData(_BaseData):
         """Gets the min/max value of features in normalized or de-normalized form."""
         minx = np.array([[0.0] * len(self.ohe_encoded_feature_names)])
         maxx = np.array([[1.0] * len(self.ohe_encoded_feature_names)])
-
         for idx, feature_name in enumerate(self.continuous_feature_names):
             max_value = self.data_df[feature_name].max()
             min_value = self.data_df[feature_name].min()
-
+            
             if normalized:
                 minx[0][idx] = (self.permitted_range[feature_name]
                                 [0] - min_value) / (max_value - min_value)

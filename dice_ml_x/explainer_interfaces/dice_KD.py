@@ -39,7 +39,7 @@ class DiceKD(ExplainerBase):
         # loading trained model
         self.model.load_model()
 
-        # number of output nodes of ML model
+        # number of output nodes of ML mode
         if self.model.model_type == ModelTypes.Classifier:
             self.num_output_nodes = self.model.get_num_output_nodes2(
                 self.data_interface.data_df[0:1][self.data_interface.feature_names])

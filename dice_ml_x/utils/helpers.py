@@ -6,16 +6,235 @@ import pickle
 import shutil
 import zipfile
 from urllib.request import urlretrieve
+import requests
 
 import numpy as np
 import pandas as pd
+from sklearn.calibration import LabelEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import FunctionTransformer, OneHotEncoder
+from scipy.io import arff
 
 import dice_ml_x
+
+dataset_links = {
+    "adult": "https://archive.ics.uci.edu/static/public/2/adult.zip",
+    "compas": "https://api.openml.org/data/download/22111929/dataset",
+    "german-credit-risk": "https://archive.ics.uci.edu/static/public/144/statlog+german+credit+data.zip",
+    "lending-club": "https://www.openintro.org/data/csv/loans_full_schema.csv"
+}
+
+
+def preprocess_compas_dataset(df: pd.DataFrame) -> pd.DataFrame:
+    age_cat_columns = ['age_cat_25-45', 'age_cat_Greaterthan45', 'age_cat_Lessthan25']
+    df['age_cat'] = df[age_cat_columns].idxmax(axis=1).str.replace('age_cat_', '')
+    race_columns = ['race_African-American', 'race_Caucasian']
+    df['race'] = df[race_columns].idxmax(axis=1).str.replace('race_', '')
+    charge_degree_columns = ['c_charge_degree_F', 'c_charge_degree_M']
+    df['c_charge_degree'] = df[charge_degree_columns].idxmax(axis=1).str.replace('c_charge_degree_', '')
+    df['sex'] = df["sex"].map({0: "Female", 1: "Male"})
+    df = df.drop(columns=age_cat_columns + race_columns + charge_degree_columns)
+    return df
+
+def load_compas_dataset() -> pd.DataFrame:
+    outdirname = "compas"
+    arff_file_name = f"{outdirname}.arff"
+    if not os.path.isfile(arff_file_name):
+        urlretrieve(dataset_links["compas"], arff_file_name)
+    arff_data = arff.loadarff(arff_file_name)
+    df = pd.DataFrame(arff_data[0])
+    byte_string_cols = [col for col in df.columns if df[col].dtype == "object"]
+    df[byte_string_cols] = df[byte_string_cols].applymap(lambda x: int(x.decode("utf-8")))
+
+    df = preprocess_compas_dataset(df)
+    return df
+
+def _preprocess_german_data(data: np.array) -> pd.DataFrame:
+    data_split = [row.split() for row in data]
+    df = pd.DataFrame(data_split)
+    column_names = ['status_of_existing_checking_account',
+                    'duration_in_month',
+                    'credit_history',
+                    'purpose',
+                    'credit_amount',
+                    'savings _account_bonds',
+                    'present_employment_since',
+                    'installment_rate_in_percentage_of_disposable_income',
+                    'personal_status_and_sex',
+                    'other_debtors_guarantors',
+                    'present_residence_since',
+                    'property',
+                    'age_in_years',
+                    'other_installment_plans',
+                    'housing',
+                    'number_of_existing_credits_at_this_bank',
+                    'job',
+                    'number_of_people_being_liable_to_provide_maintenance_for',
+                    'telephone',
+                    'foreign_worker',
+                    'credit_risk'
+    ]
+    df.columns = column_names
+    categorical_value_mapping = {
+       'status_of_existing_checking_account': {
+            'A11': '... < 0 DM',
+            'A12': '0 <= ... < 200 DM',
+            'A13': '... >= 200 DM / salary assignments for at least 1 year',
+            'A14': 'no checking account'
+        },
+        'credit_history':{
+            'A30': 'no credits taken/ all credits paid back duly',
+            'A31': 'all credits at this bank paid back duly',
+            'A32': 'existing credits paid back duly till now',
+            'A33': 'delay in paying off in the past',
+            'A34': 'critical account/ other credits existing (not at this bank)'
+        },
+        'purpose': {
+            'A40': 'car (new)',
+            'A41': 'car (used)',
+            'A42': 'furniture/equipment',
+            'A43': 'radio/television',
+            'A44': 'domestic appliances',
+            'A45': 'repairs',
+            'A46': 'education',
+            'A47': '(vacation - does not exist?)',
+            'A48': 'retraining',
+            'A49': 'business',
+            'A410': 'others'
+        },
+        'savings _account_bonds': {
+            'A61': '... < 100 DM',
+            'A62': '100 <= ... < 500 DM',
+            'A63': '500 <= ... < 1000 DM',
+            'A64': '.. >= 1000 DM',
+            'A65': 'unknown/ no savings account'
+        },
+        'present_employment_since': {
+            'A71': 'unemployed',
+            'A72': '... < 1 year',
+            'A73': '1 <= ... < 4 years',
+            'A74': '4 <= ... < 7 years',
+            'A75': '.. >= 7 years'
+        },
+        'personal_status_and_sex': {
+            'A91': 'male : divorced/separated',
+            'A92': 'female : divorced/separated/married',
+            'A93': 'male : single',
+            'A94': 'male : married/widowed',
+            'A95': 'female : single'
+        },
+        'other_debtors_guarantors': {
+            'A101': 'none',
+            'A102': 'co-applicant',
+            'A103': 'guarantor'
+        },
+        'property': {
+            'A121': 'real estate',
+            'A122': 'if not A121 : building society savings agreement/ life insurance',
+            'A123': 'if not A121/A122 : car or other, not in attribute 6',
+            'A124': 'unknown / no property'
+        },
+        'other_installment_plans': {
+            'A141': 'bank',
+            'A142': 'stores',
+            'A143': 'none'
+        },
+        'housing': {
+            'A151': 'rent',
+            'A152': 'own',
+            'A153': 'for free'
+        },
+        'job': {
+            'A171': 'unemployed/ unskilled - non-resident',
+            'A172': 'unskilled - resident',
+            'A173': 'skilled employee / official',
+            'A174': 'management/ self-employed/ highly qualified employee/ officer'
+        },
+        'telephone': {
+            'A191': 'none',
+            'A192': 'yes, registered under the customers name'
+        },
+        'foreign_worker': {
+            'A201': 'yes',
+            'A202': 'no'
+        },
+        'credit_risk': {
+            '1': 0,
+           '2': 1
+        } 
+    }
+    for col, mapping in categorical_value_mapping.items():
+        if col in df.columns:
+            df[col] = df[col].replace(mapping)
+            
+    return df
+
+def load_german_credit_dataset(model_type: str=None) -> pd.DataFrame:
+    outdirname = "german_credit"
+    german_credit_file_name = f"{outdirname}.zip"
+    if not os.path.isfile(german_credit_file_name):
+        urlretrieve(dataset_links['german-credit-risk'], german_credit_file_name)
+    with zipfile.ZipFile(german_credit_file_name) as unzip:
+        unzip.extractall(outdirname)
+    
+    raw_data = np.genfromtxt(f"{outdirname}/german.data", delimiter=", ",
+                             dtype=str, invalid_raise=False)
+    df = _preprocess_german_data(raw_data)
+    return df
+
+def preprocess_lending_club_data(df: pd.DataFrame):
+    numerical = df.select_dtypes(include=[np.number]).columns
+    continuous_imputer = SimpleImputer(strategy="mean")
+    label_encoder = LabelEncoder()
+    df[numerical] = continuous_imputer.fit_transform(df[numerical])
+
+    categorical = df.columns.difference(numerical)
+    categorical_imputer = SimpleImputer(strategy="most_frequent")
+    df[categorical] = categorical_imputer.fit_transform(df[categorical])
+
+    df['emp_title_encoded'] = label_encoder.fit_transform(df['emp_title'])
+    df['loan_status'] = df['loan_status'].apply(lambda x: 1 if x == 'Fully Paid' else 0)
+    df.drop(columns=['num_accounts_120d_past_due', 'emp_title'], inplace=True)
+    df.rename(columns={'emp_title_encoded': 'emp_title'}, inplace=True)
+    return df
+
+def load_lending_club_dataset(model_type: str=None) -> pd.DataFrame:
+    csv_file_name = "lending_club_data.csv"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.openintro.org/data/index.php?data=loans_full_schema",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1"
+    }
+    if not os.path.isfile(csv_file_name):
+        response = requests.get(dataset_links["lending-club"], headers=headers)
+
+        if response.status_code == 200:
+            with open(csv_file_name, "wb") as f:
+                f.write(response.content)
+            print("File downloaded successfully!")
+        else:
+            print(f"Error downloading file. Status code: {response.status_code}")
+            print(response.text) 
+    df = pd.read_csv(csv_file_name)
+    preprocess_lending_club_data(df=df)
+    return df
+
+def get_compas_data_info() -> dict:
+    return {
+        
+    }
+
+
+def dummy_function():
+    pass
 
 
 def load_adult_income_dataset(only_train=True):

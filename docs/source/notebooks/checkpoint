@@ -1,0 +1,2 @@
+model_checkpoint_path: "adult-income_TF2_model"
+all_model_checkpoint_paths: "adult-income_TF2_model"
