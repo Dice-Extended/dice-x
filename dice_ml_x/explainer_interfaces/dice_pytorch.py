@@ -35,9 +35,8 @@ class DicePyTorch(ExplainerBase):
         self.data_interface.create_ohe_params(temp_ohe_data)
         self.minx, self.maxx, self.encoded_categorical_feature_indexes, self.encoded_continuous_feature_indexes, \
             self.cont_minx, self.cont_maxx, self.cont_precisions = self.data_interface.get_data_params_for_gradient_dice()
-
         self.num_output_nodes = self.model.get_num_output_nodes(len(self.data_interface.ohe_encoded_feature_names)).shape[1]
-
+        
         # variables required to generate CFs - see generate_counterfactuals() for more info
         self.cfs = []
         self.features_to_vary = []

@@ -120,18 +120,23 @@ class Benchmarking:
         trainer.train(train_dataloader=train_dataloader, test_dataloader=test_dataloader)
         return trainer.model
     
-    def compute_pytorch_accuracy(self, model, test_dataloader):
-        from sklearn.metrics import accuracy_score
-        all_preds = []
-        all_labels = []
-        model.eval()  
-        with torch.no_grad():
-            for data, labels in test_dataloader:
-                outputs = model(data)
-                predictions = torch.argmax(outputs, dim=1).numpy()
-                all_preds.extend(predictions)
-                all_labels.extend(labels.numpy())
-        return accuracy_score(all_labels, all_preds)
+    def compute_pytorch_accuracy(self, model, test_dataloader, criterion=torch.nn.BCELoss()):
+        correct_test_preds = 0.0
+        test_loss = 0.0
+        device = 'gpu' if torch.cuda.is_available() else 'cpu'
+        model.eval()
+        for _, test_batch in enumerate(test_dataloader):
+            test_features, test_labels = test_batch
+            test_features, test_labels = test_features.to(device), test_labels.float().to(device).unsqueeze(1)
+            with torch.no_grad():
+                
+                test_outputs = model(test_features)
+                loss = criterion(test_outputs, test_labels)
+                test_preds = (test_outputs > 0.5).float()
+            test_loss += loss.item()
+            correct_test_preds += (test_preds == test_labels).sum().item()
+
+        return correct_test_preds / len(test_dataloader.dataset)
     
     def train_keras_model(self, train_dataset, test_dataset, epochs=10):
         model = neuralnetworks.TF2Model()

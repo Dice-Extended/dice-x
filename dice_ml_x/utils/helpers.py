@@ -66,7 +66,7 @@ def _preprocess_german_data(data: np.array) -> pd.DataFrame:
                     'credit_history',
                     'purpose',
                     'credit_amount',
-                    'savings _account_bonds',
+                    'savings_account_bonds',
                     'present_employment_since',
                     'installment_rate_in_percentage_of_disposable_income',
                     'personal_status_and_sex',
@@ -175,7 +175,17 @@ def _preprocess_german_data(data: np.array) -> pd.DataFrame:
     for col, mapping in categorical_value_mapping.items():
         if col in df.columns:
             df[col] = df[col].replace(mapping)
-            
+    # duration_in_month
+    # credit_amount
+    # installment_rate_in_percentage_of_disposable_income
+    # present_residence_since
+    # age_in_years
+    # number_of_existing_credits_at_this_bank
+    # number_of_people_being_liable_to_provide_maintenance_for
+    number_cols = ['duration_in_month', 'credit_amount', 'installment_rate_in_percentage_of_disposable_income',
+                   'present_residence_since', 'age_in_years', 'number_of_existing_credits_at_this_bank',
+                   'number_of_people_being_liable_to_provide_maintenance_for']
+    df[number_cols] = df[number_cols].astype(int)
     return df
 
 def load_german_credit_dataset(model_type: str=None) -> pd.DataFrame:
@@ -265,6 +275,10 @@ def load_lending_club_dataset() -> pd.DataFrame:
 
     new_df['loan_status'] = np.select(ls_conditions, ls_outputs, default=df['loan_status'])
     new_df['loan_status'] = new_df['loan_status'].astype(int)
+
+    # Remove rows with negative credit history
+    neg_credi_his_idx = new_df.loc[new_df['credit_history'] < 0].index
+    new_df.drop(neg_credi_his_idx, inplace=True)
     return new_df
 
 def get_compas_data_info() -> dict:
