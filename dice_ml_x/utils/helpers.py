@@ -12,12 +12,14 @@ import numpy as np
 import pandas as pd
 from sklearn.calibration import LabelEncoder
 from sklearn.compose import ColumnTransformer
+from sklearn.discriminant_analysis import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import FunctionTransformer, OneHotEncoder
 from scipy.io import arff
+import torch
 
 import dice_ml_x
 
@@ -39,6 +41,9 @@ def preprocess_compas_dataset(df: pd.DataFrame) -> pd.DataFrame:
     df['sex'] = df["sex"].map({0: "Female", 1: "Male"})
     df = df.drop(columns=age_cat_columns + race_columns + charge_degree_columns)
     return df
+
+
+
 
 def load_compas_dataset() -> pd.DataFrame:
     outdirname = "compas"
@@ -186,46 +191,81 @@ def load_german_credit_dataset(model_type: str=None) -> pd.DataFrame:
     df = _preprocess_german_data(raw_data)
     return df
 
-def preprocess_lending_club_data(df: pd.DataFrame):
-    numerical = df.select_dtypes(include=[np.number]).columns
-    continuous_imputer = SimpleImputer(strategy="mean")
-    label_encoder = LabelEncoder()
-    df[numerical] = continuous_imputer.fit_transform(df[numerical])
+def load_lending_club_dataset() -> pd.DataFrame:
+    """
+    As described in the DiCE paper by the authors.
+    """
+    df = pd.read_csv("lending_club_dataset/loan.csv", low_memory=False)
+    import math
+    def parse_year(year_as_str):
+        year = int(year_as_str)
+        if year <= 99:
+            return 1900 + year if year > 50 else 2000 + year
+        return 2000 + year
+    # raw features
+    new_df = pd.DataFrame()
+    new_df['employment_years'] = df['emp_length']
+    new_df['num_open_credit_acc'] = df['open_acc']
+    new_df['annual_income'] = df['annual_inc']
+    new_df['loan_grade'] = df['grade']
 
-    categorical = df.columns.difference(numerical)
-    categorical_imputer = SimpleImputer(strategy="most_frequent")
-    df[categorical] = categorical_imputer.fit_transform(df[categorical])
+    # credit history
+    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    lending_months = df['issue_d'].apply(lambda x: x.split('-')[0]).__deepcopy__().copy()
+    issue_month = pd.DataFrame(pd.Index(months).get_indexer(lending_months))
+    issue_year = pd.DataFrame(df['issue_d'].apply(lambda x: parse_year(x.split('-')[1])).__deepcopy__().copy())
+    issue_yearmonth = pd.DataFrame(issue_year.values * 100 + issue_month.values)
+    adjusted_last_ym = issue_yearmonth[0].apply(lambda x: (float(x) / 100.0) * 100 + ((float(x) - math.floor(float(x) / 100.0) * 100) - 1) / 12 * 100) / 100
+    earliest_credit_line_year = pd.DataFrame(df['earliest_cr_line'].apply(lambda x: parse_year(x.split('-')[1])).__deepcopy__().copy())
+    earliest_credit_line_months = df['earliest_cr_line'].apply(lambda x: x.split('-')[0]).__deepcopy__().copy()
+    earliest_credit_line_months = pd.DataFrame(pd.Index(months).get_indexer(earliest_credit_line_months))
+    adjusted_credit_line_ym = pd.DataFrame(earliest_credit_line_year.values * 100 + \
+                            earliest_credit_line_months.apply(
+                                lambda x: x - 1
+                            ) / 12 * 100) / 100
+    adjusted_credit_line_ym = adjusted_credit_line_ym.apply(lambda x: round(x, 2))
+    adjusted_last_ym = adjusted_last_ym.apply(lambda x: round(x, 2)).to_frame()
+    credit_ym = (adjusted_last_ym - adjusted_credit_line_ym).apply(lambda x: round(x, 1))
+    new_df['credit_history'] = credit_ym.values
 
-    df['emp_title_encoded'] = label_encoder.fit_transform(df['emp_title'])
-    df['loan_status'] = df['loan_status'].apply(lambda x: 1 if x == 'Fully Paid' else 0)
-    df.drop(columns=['num_accounts_120d_past_due', 'emp_title'], inplace=True)
-    df.rename(columns={'emp_title_encoded': 'emp_title'}, inplace=True)
-    return df
+    # purpose
+    conditions = [
+        df['purpose'].isin(['credit_card', 'debt_consolidation']),  # Condition for "debt"
+        df['purpose'].isin(['car', 'major_purchase', 'vacation', 'wedding', 'medical', 'other']),  # Condition for "purchase"
+        df['purpose'].isin(['house', 'home_improvement', 'moving', 'renewable_energy'])  # Another condition for "purchase"
+    ]
 
-def load_lending_club_dataset(model_type: str=None) -> pd.DataFrame:
-    csv_file_name = "lending_club_data.csv"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://www.openintro.org/data/index.php?data=loans_full_schema",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1"
-    }
-    if not os.path.isfile(csv_file_name):
-        response = requests.get(dataset_links["lending-club"], headers=headers)
+    outputs = ['debt', 'purchase', 'purchase']
 
-        if response.status_code == 200:
-            with open(csv_file_name, "wb") as f:
-                f.write(response.content)
-            print("File downloaded successfully!")
-        else:
-            print(f"Error downloading file. Status code: {response.status_code}")
-            print(response.text) 
-    df = pd.read_csv(csv_file_name)
-    preprocess_lending_club_data(df=df)
-    return df
+    new_df['purpose'] = np.select(conditions, outputs, default=df['purpose'])
+
+    # home ownership
+
+    new_df['home'] = np.where(
+        df['home_ownership'].isin(['ANY', 'NONE']), 
+        'OTHER', 
+        df['home_ownership']
+    )
+
+    # state
+
+    new_df['addr_state'] = df['addr_state']
+    new_df.replace('n/a', np.nan,inplace=True)
+    new_df['employment_years'].fillna(value=0,inplace=True)
+    new_df['employment_years'].replace(to_replace='[^0-9]+', value='', inplace=True, regex=True)
+    new_df['employment_years'] = new_df['employment_years'].astype(int)
+
+    # target column (loan_status) 0 if never paid or not paid yet 1 if paid
+
+    ls_conditions = [
+        df['loan_status'].isin(['Charged Off', 'Current']),
+        df['loan_status'] == 'Fully Paid'
+    ]
+    ls_outputs = [0, 1]
+
+    new_df['loan_status'] = np.select(ls_conditions, ls_outputs, default=df['loan_status'])
+    new_df['loan_status'] = new_df['loan_status'].astype(int)
+    return new_df
 
 def get_compas_data_info() -> dict:
     return {
@@ -237,7 +277,7 @@ def dummy_function():
     pass
 
 
-def load_adult_income_dataset(only_train=True):
+def load_adult_income_dataset(only_train=False):
     """Loads adult income dataset from https://archive.ics.uci.edu/ml/datasets/Adult and prepares
        the data for data analysis based on https://rpubs.com/H_Zhu/235617
 

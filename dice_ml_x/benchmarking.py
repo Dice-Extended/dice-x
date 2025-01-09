@@ -40,7 +40,7 @@ class Benchmarking:
         else:
             raise ValueError(f"Unkown dataset: {name}")
         
-    def split_data(self, df, target_col, test_size=0.2, random_state=0):
+    def split_data(self, df, target_col, test_size=0.2, random_state=42):
         target = df[target_col]
         train_dataset, test_dataset, y_train, y_test = train_test_split(df,
                                                                 target,
@@ -70,16 +70,16 @@ class Benchmarking:
                                 ('classifier', RandomForestClassifier())])
             return x_train, x_test, train_dataset, test_dataset, y_train, y_test
         elif backend == "PYT":
-            pyt_train_dataset = neuralnetworks.PYTDataset(df, target_column=target_name)
-            pyt_test_dataset = neuralnetworks.PYTDataset(test_dataset, target_column=target_name,
-                                                         scaler=pyt_train_dataset.scaler,
-                                                         encoder=pyt_train_dataset.encoder,
-                                                         target_encoder=pyt_train_dataset.target_encoder)
-            
+            pyt_train_dataset = neuralnetworks.PYTDataset(df, target_column=target_name, train=True)
+            pyt_test_dataset = neuralnetworks.PYTDataset(df, target_column=target_name, train=False)
+            train_df = pyt_train_dataset.train_dataset_df
+            test_df = pyt_train_dataset.test_dataset_df
+            y_train_df = pyt_train_dataset.y_train_df
+            y_test_df = pyt_train_dataset.y_test_df
             pyt_train_dataloader = DataLoader(pyt_train_dataset, batch_size=batch_size, shuffle=True)
             pyt_test_dataloader = DataLoader(pyt_test_dataset, batch_size=batch_size // 4, shuffle=False)
             
-            return pyt_train_dataloader, pyt_test_dataloader, pyt_train_dataset, pyt_test_dataset, y_train, y_test
+            return pyt_train_dataloader, pyt_test_dataloader, train_df, test_df, y_train_df, y_test_df
         elif backend == "TF2":
             categorical = x_train.columns.difference(continuous_features)
 
@@ -162,7 +162,10 @@ class Benchmarking:
             for dataset_name in self.datasets:
                 
                 df, target_column = self.load_dataset(dataset_name)
+                
                 continuous_features = df.select_dtypes(include=[np.number]).columns.to_list()
+                print("continuous features are: ", continuous_features)
+                print("target column is: ", target_column)
                 continuous_features.remove(target_column)
                 self.results[dataset_name] = {}
                 model_items = {}
@@ -191,8 +194,10 @@ class Benchmarking:
                     }
 
                     if backend == "PYT":
-                        backend_results['state_dict'] = model.state_dict()
+                        model_path = f"{dataset_name}_{backend}_model.pth"
+                        torch.save(model.state_dict(), model_path)
                         backend_results['model'] = model
+                        backend_results['model_path'] = model_path
                     elif backend == "TF2":
                         model_path = f"{dataset_name}_{backend}_model"
                         model.save_weights(model_path, save_format='tf')

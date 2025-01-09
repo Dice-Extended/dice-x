@@ -1,3 +1,4 @@
+from sklearn.model_selection import train_test_split
 from torch import nn, sigmoid
 import tensorflow as tf
 import torch
@@ -14,6 +15,8 @@ from collections import OrderedDict
 import os
 import time
 import copy
+
+from dice_ml_x.utils import helpers
 class TF2Model(tf.keras.Model):
 
     """
@@ -40,52 +43,81 @@ class TF2Model(tf.keras.Model):
         x = self.dense_1(input)
         output = self.dense_2(x)
         return output
-    
 
 class PYTDataset(torch.utils.data.Dataset):
-    def __init__(self, dataframe: pd.DataFrame, target_column: str, scaler=None, encoder=None, target_encoder=None):
+    def __init__(self, dataframe: pd.DataFrame, target_column: str, scaler=None,
+                            encoder=None, target_encoder=None, test_size=0.2, train=True):
         self.dataframe = dataframe.copy()
         self.target_column = target_column
         self.scaler = scaler
         self.encoder = encoder
         self.target_encoder = target_encoder
+        self.test_size = test_size
+        self.train = train
+        self.train_features_tensor, self.test_features_tensor, \
+        self.y_train_tensor, self.y_test_tensor = None, None, None, None
+        self.train_dataset_df, self.test_dataset_df, \
+        self.y_train_df, self.y_test_df = None, None, None, None
+        self.preprocess_for_torch_training()
 
-        self.features = self.dataframe.drop(columns=[target_column])
-        self.target = self.dataframe[target_column]
+    def preprocess_for_torch_training(self):
+
+        self.features = self.dataframe.drop(columns=[self.target_column])
+        self.target = self.dataframe[self.target_column]
         
-        self.numerical_cols = self.features.select_dtypes(include=[np.number]).columns
-        self.categorical_cols = self.features.columns.difference(self.numerical_cols)
-        if self.scaler is None and len(self.numerical_cols) > 0:
-            self.scaler = StandardScaler().fit(self.features[self.numerical_cols])
+        numerical_cols = self.features.select_dtypes(include=[np.number]).columns
+        categorical_cols = self.features.columns.difference(numerical_cols)
+        if self.scaler is None and len(numerical_cols) > 0:
+            self.scaler = StandardScaler().fit(self.features[numerical_cols])
 
-        if self.encoder is None and len(self.categorical_cols) > 0:
+        if self.encoder is None and len(categorical_cols) > 0:
             self.encoder = OneHotEncoder(sparse_output=False,
-                                         handle_unknown='ignore').fit(self.features[self.categorical_cols])
+                                            handle_unknown='ignore').fit(self.features[categorical_cols])
 
-        if len(self.numerical_cols) > 0:
-            self.features[self.numerical_cols] = self.scaler.transform(self.features[self.numerical_cols])
+        if len(numerical_cols) > 0:
+            self.features[numerical_cols] = self.scaler.transform(self.features[numerical_cols])
         
-        if len(self.categorical_cols) > 0:
-            encoded_cats = self.encoder.transform(self.features[self.categorical_cols])
+        if len(categorical_cols) > 0:
+            encoded_cats = self.encoder.transform(self.features[categorical_cols])
             encoded_cat_df = pd.DataFrame(encoded_cats, columns=self.encoder.get_feature_names_out())
             encoded_cat_df.index = self.features.index
-            self.features = self.features.drop(columns=list(self.categorical_cols))
+            self.features = self.features.drop(columns=list(categorical_cols))
             self.features = pd.concat([self.features, encoded_cat_df], axis=1)
 
         if self.target.dtype == 'object' or str(self.target.dtype) == 'category':
-            self.target_encoder = LabelEncoder()
-            self.target = self.target_encoder.fit_transform(self.target)
+            target_encoder = LabelEncoder()
+            self.target = target_encoder.fit_transform(self.target)
         else:
-            self.target_encoder = None
+            target_encoder = None
 
         self.features = torch.tensor(self.features.values, dtype=torch.float32)
-        self.target = torch.tensor(self.target.values, dtype=torch.long)
+        self.target = torch.tensor(self.target, dtype=torch.long)
+        combined_features = torch.cat((self.features, self.target.unsqueeze(1)), dim=1)
+        self.train_features_tensor, self.test_features_tensor, \
+        self.y_train_tensor, self.y_test_tensor = train_test_split(combined_features,
+                                                                    self.target, test_size=self.test_size,
+                                                                    stratify=combined_features[:, -1],
+                                                                    random_state=42)
+        self.train_dataset_df, self.test_dataset_df, \
+        self.y_train_df, self.y_test_df = train_test_split(self.dataframe, self.dataframe[self.target_column],
+                                                            test_size=self.test_size,
+                                                            stratify=self.dataframe[self.target_column],
+                                                            random_state=42)
 
     def __len__(self):
-        return len(self.target)
+        if self.train:
+            return len(self.y_train_tensor)
+        else:
+            return len(self.y_test_tensor)
+        
     
     def __getitem__(self, position):
-        return self.features[position], self.target[position]
+        if self.train:
+            train_features = self.train_features_tensor[:, :-1]
+            return train_features[position], self.y_train_tensor[position]
+        else:
+            test_features = self.test_features_tensor[:, :-1]
+            return test_features[position], self.y_test_tensor[position]
 
 
 class PYTModel(nn.Module):
@@ -182,7 +214,7 @@ class PYTModel(nn.Module):
     
 
     def save_model(self, history, model_path=None):
-        artefacts_dir = 'artefacts'
+        artefacts_dir = 'pytorch_artefacts'
         model_file_name = f'pyt_model_{time.time()}.pth'
         if model_path is not None and os.path.isdir(model_path):
             torch.save(history, os.path.join(model_path, model_file_name))
