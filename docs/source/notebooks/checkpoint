@@ -1,2 +1,2 @@
-model_checkpoint_path: "adult-income_TF2_model"
-all_model_checkpoint_paths: "adult-income_TF2_model"
+model_checkpoint_path: "compas-recidivism_TF2_model"
+all_model_checkpoint_paths: "compas-recidivism_TF2_model"

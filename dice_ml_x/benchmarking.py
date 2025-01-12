@@ -1,3 +1,4 @@
+import os
 import dice_ml_x
 from dice_ml_x.utils import helpers, neuralnetworks
 from sklearn.model_selection import train_test_split
@@ -161,16 +162,19 @@ class Benchmarking:
         elif backend == 'TF2':
             return self.train_keras_model(X, x_test, epochs)
     
-    def load_and_train(self, batch_size):
+    def load_and_train(self, batch_size, artefact_path=None):
         num_processes = len(self.datasets) * len(self.backends)
+        
+        if artefact_path is None:
+            artefact_path = "benchmarking_artefact"
+        if not os.path.isdir(artefact_path):
+            os.mkdir(artefact_path)
         with tqdm(total=num_processes, desc="Benchmarking", leave=True) as d_pbar:
             for dataset_name in self.datasets:
                 
                 df, target_column = self.load_dataset(dataset_name)
                 
                 continuous_features = df.select_dtypes(include=[np.number]).columns.to_list()
-                print("continuous features are: ", continuous_features)
-                print("target column is: ", target_column)
                 continuous_features.remove(target_column)
                 self.results[dataset_name] = {}
                 model_items = {}
@@ -199,14 +203,12 @@ class Benchmarking:
                     }
 
                     if backend == "PYT":
-                        model_path = f"{dataset_name}_{backend}_model.pth"
+                        model_path = os.path.join(artefact_path, f"{dataset_name}_{backend}_model.pth")
                         torch.save(model.state_dict(), model_path)
-                        backend_results['model'] = model
                         backend_results['model_path'] = model_path
                     elif backend == "TF2":
-                        model_path = f"{dataset_name}_{backend}_model"
-                        model.save_weights(model_path, save_format='tf')
-                        backend_results['model'] = model
+                        model_path = os.path.join(artefact_path, f"{dataset_name}_{backend}_model")
+                        model.save_weights(model_path, save_format='tf')    
                         backend_results['model_path'] = model_path
                     else:  # sklearn
                         backend_results['model'] = model
@@ -217,7 +219,7 @@ class Benchmarking:
                         
                         cfs, input_instance, generation_time = self.generate_cfs(df,
                                                                                  continuous_features,
-                                                                                 backend_results['model'],
+                                                                                 model,
                                                                                  backend, method,
                                                                                  target_column)
                         backend_results['cfs'][method] = cfs
@@ -308,5 +310,8 @@ class Benchmarking:
                                         perturbation_method=perturbation_method, **kwargs[perturbation_method])
         
         return cfes.to_dataframe()
+    
+    def compute_metrics():
+        return
         
 

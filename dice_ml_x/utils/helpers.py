@@ -54,8 +54,10 @@ def load_compas_dataset() -> pd.DataFrame:
     df = pd.DataFrame(arff_data[0])
     byte_string_cols = [col for col in df.columns if df[col].dtype == "object"]
     df[byte_string_cols] = df[byte_string_cols].applymap(lambda x: int(x.decode("utf-8")))
-
     df = preprocess_compas_dataset(df)
+    cols_to_get = ["age", "sex", "race", "priors_count", "c_charge_degree", "twoyearrecid"]
+    drop_cols = df.columns.difference(cols_to_get)
+    df.drop(columns=drop_cols, inplace=True)
     return df
 
 def _preprocess_german_data(data: np.array) -> pd.DataFrame:
@@ -607,3 +609,4 @@ class DataTransfomer:
 
     def inverse_transform(self, data):
         return self.data_transformer.inverse_transform(data)  # should return a numpy array
+    

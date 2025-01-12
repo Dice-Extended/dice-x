@@ -217,7 +217,7 @@ class DiceGenetic(ExplainerBase):
 
     def _generate_counterfactuals(self, query_instance, total_CFs, perturbation_method, initialization="kdtree",
                                   desired_range=None, desired_class="opposite", proximity_weight=0.2,
-                                  sparsity_weight=0.2, diversity_weight=4.0, robustness_weight=0.2,
+                                  sparsity_weight=0.2, diversity_weight=4.0, robustness_weight=0.4,
                                   categorical_penalty=0.1, algorithm="DiverseCF", features_to_vary="all",
                                   permitted_range=None, yloss_type="hinge_loss", diversity_loss_type="dpp_style:inverse_dist",
                                   feature_weights="inverse_mad", stopping_threshold=0.5, posthoc_sparsity_param=0.1,
@@ -762,9 +762,12 @@ class DiceGenetic(ExplainerBase):
             population_fitness = self.compute_loss(population, desired_range, desired_class, perturbation_method, **kwargs)
 
             population_fitness = population_fitness[population_fitness[:, 1].argsort()]
-
             current_best_loss = population_fitness[0][1]
             self._populate_loss_history(iterations, self.yloss, self.sparsity_loss, self.proximity_loss, self.robustness_loss, current_best_loss)
+            print("population fitness shape is -> ", population_fitness.shape)
+            print("sparsity loss shape is -> ", self.sparsity_loss.shape)
+            print("proximity loss shape is -> ", self.proximity_loss.shape)
+            print("robustness loss shape is -> ", self.robustness_loss.shape)
             to_pred = np.array([population[int(tup[0])] for tup in population_fitness[:self.total_CFs]])
 
             if self.total_CFs > 0:
