@@ -5,6 +5,7 @@ Gaussian perturbation implementation.
 from dice_ml_x.perturbation_interfaces.base_perturbation import _BasePerturbation
 import numpy as np
 import pandas as pd
+import torch
 
 class GaussianPerturbation(_BasePerturbation):
     """
@@ -20,7 +21,7 @@ class GaussianPerturbation(_BasePerturbation):
         categorical_features (dict): Dictionary of categorical features and their possible values.
     """
 
-    def __init__(self, std_dev=0.1, continuous_features: list = [], categorical_features: dict = {}) -> None:
+    def __init__(self, std_dev=0.1, continuous_features: list = [], categorical_features: dict = {}, categorical_indices: dict = {}) -> None:
         """
         Initializes the GaussianPerturbation with features given.
 
@@ -49,7 +50,6 @@ class GaussianPerturbation(_BasePerturbation):
         Returns:
             pandas.DataFrame: A perturbed version of the given counterfactual explanation.
         """
-        
         c_i_prime = c_i.copy().reset_index(drop=True)
         # Handle the continuous features
         for feature in self.continuous_features:

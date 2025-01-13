@@ -285,7 +285,7 @@ class Benchmarking:
             }
         } 
         start = time()
-        dice_exp = exp.generate_counterfactuals(x_test[1:2], total_CFs=4, perturbation_method=perturbation_method,
+        dice_exp = exp.generate_counterfactuals(x_test[1:2], total_CFs=5, perturbation_method=perturbation_method,
                                         desired_class="opposite", **kwargs[perturbation_method])
         end = time()
         generation_time = (end-start)

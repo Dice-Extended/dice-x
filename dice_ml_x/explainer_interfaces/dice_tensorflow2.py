@@ -54,6 +54,15 @@ class DiceTensorFlow2(ExplainerBase):
         self.feature_weights_input = ''
         self.hyperparameters = [1, 1, 1, 1]  # proximity_weight, diversity_weight, categorical_penalty
         self.optimizer_weights = []  # optimizer, learning_rate
+        self.loss_history = {
+            "iterations": [],
+            "y_loss": [],
+            "proximity_loss": [],
+            "diversity_loss": [],
+            "regularization_loss": [],
+            "robustness_loss": [],
+            "total_loss": [] 
+        }
 
     def generate_counterfactuals(self, query_instance, total_CFs, desired_class="opposite", proximity_weight=0.5,
                                  diversity_weight=1.0, robustness_weight=0.5, categorical_penalty=0.1, algorithm="DiverseCF",
@@ -243,147 +252,105 @@ class DiceTensorFlow2(ExplainerBase):
             self.optimizer = tf.compat.v1.train.RMSPropOptimizer(learning_rate=learning_rate)
 
 
+    def do_perturbation(self):
+        cfs_stacked = tf.stack(self.cfs, axis=0)
+        cfs_stacked = tf.squeeze(cfs_stacked, axis=1)
+        
+        if self.encoded_continuous_feature_indexes:
+            continuous_slice = tf.gather(cfs_stacked, self.encoded_continuous_feature_indexes, axis=1)
+            noise = continuous_slice * 0.3
+            noise_mask = tf.zeros_like(cfs_stacked)
+
+            indices = tf.constant([[i, j] for i in range(cfs_stacked.shape[0]) 
+                                for j in self.encoded_continuous_feature_indexes], dtype=tf.int32)
+            updates = tf.reshape(noise, [-1])
+            noise_mask = tf.tensor_scatter_nd_update(noise_mask, indices, updates)
+            cfs_stacked = cfs_stacked + noise_mask
+
+        if self.encoded_categorical_feature_indexes:
+            for cat_cols in self.encoded_categorical_feature_indexes:
+                cat_slice = tf.gather(cfs_stacked, cat_cols, axis=1)
+                sample_size = tf.shape(cat_slice)[0]
+                num_cats = tf.shape(cat_slice)[1]
+
+                rand_idx = tf.random.uniform(shape=(sample_size, ), minval=0, maxval=num_cats, dtype=tf.int32)
+                cat_slice_perturbed = tf.one_hot(rand_idx, depth=num_cats, dtype=tf.float64)
+
+                cat_mask = tf.zeros_like(cfs_stacked)
+                indices = tf.constant([[i, j] for i in range(cfs_stacked.shape[0]) for j in cat_cols], dtype=tf.int32)
+                updates = tf.reshape(cat_slice_perturbed, [-1])
+                updates = tf.cast(updates, dtype=tf.float32)
+                cat_mask = tf.tensor_scatter_nd_update(cat_mask, indices, updates)
+                cfs_perturbed = cfs_stacked + cat_mask
+        cfs_perturbed = tf.Variable(tf.identity(cfs_perturbed), trainable=True)
+        return cfs_perturbed
+
     @tf.function
-    def optimize_perturbations(self, c_i_prime_numerical, c_i_numerical, gamma):
+    def optimize_perturbations(self, c_i_prime: tf.Tensor, c_i: tf.Tensor, gamma):
        #print(f"c_i_prime_numerical shape: {c_i_prime_numerical.shape}")
         with tf.GradientTape() as tape:
-            tape.watch(c_i_prime_numerical)
-            pred_i = self.predict_fn_with_grads(c_i_numerical)
-            pred_i_prime = self.predict_fn_with_grads(c_i_prime_numerical)
+            c_i = tf.reshape(c_i, [-1, c_i.shape[-1]])
+            c_i_prime = tf.reshape(c_i_prime, [-1, c_i_prime.shape[-1]])
+            tape.watch(c_i_prime)
+            pred_i = self.predict_fn_with_grads(c_i)
+            pred_i_prime = self.predict_fn_with_grads(c_i_prime)
             class_loss = tf.reduce_mean((pred_i - pred_i_prime) ** 2)
-            distance = tf.norm(c_i_prime_numerical - c_i_numerical, ord=2)
+            distance = tf.norm(c_i_prime - c_i, ord=2)
             loss = class_loss - gamma * distance
-        grads = tape.gradient(loss, [c_i_prime_numerical])
+        grads = tape.gradient(loss, [c_i_prime])
         
         return loss, grads
     
     def generate_perturbations_vectorized(self, method: str, max_iter=100, tol=1e-3, gamma=1e-2, **kwargs):
-        perturbation_instance = PerturbationFactory.get_perturbation(method, **kwargs)
-        perturbed_cfs = []
-        cfs = np.array([self.cfs[i][0] for i in range(len(self.cfs))])
         
-        cfs_df: pd.DataFrame = self.model.transformer.inverse_transform(
-               self.data_interface.get_decoded_data(cfs))
-        for _, c_i in cfs_df.iterrows():
-            c_i_df = pd.DataFrame([c_i])
-            c_i_prime_df = perturbation_instance.generate(c_i=c_i_df)
-            perturbed_cfs.append(c_i_prime_df)
-
-        
-        cf_numerical = tf.constant(cfs, dtype=tf.float32)
-        perturbed_cfs_df = pd.concat(perturbed_cfs, ignore_index=True)
-        cf_prime_numerical = tf.Variable(self.model.transformer.transform(perturbed_cfs_df), dtype=tf.float32, trainable=True)
+        c_i_prime = self.do_perturbation()
+        c_i = tf.stack(self.cfs, axis=0)
         optimizer = tf.keras.optimizers.AdamW(learning_rate=1e-2)
-        optimized_c_i_prime = None
         prev_loss = np.inf
-
         for it in range(max_iter):
-            loss, grads = self.optimize_perturbations(cf_prime_numerical, cf_numerical, gamma)
-            optimizer.apply_gradients(zip(grads, [cf_prime_numerical]))
+            loss, grads = self.optimize_perturbations(c_i_prime, c_i, gamma)
+            optimizer.apply_gradients(zip(grads, [c_i_prime]))
             
             if abs(loss.numpy() - prev_loss) < tol: 
-                prev_loss = loss.numpy()
+                
                 break
-
-        optimized_c_i_prime = pd.DataFrame(
-            self.model.transformer.inverse_transform(
-            self.data_interface.get_decoded_data(cf_prime_numerical.numpy())),
-        columns=cfs_df.columns)
-        return optimized_c_i_prime
-
-    def generate_perturbations(self, method: str, max_iter=100,
-                               tol=1e-3, gamma=1e-2, **kwargs) -> pd.DataFrame:
-        perturbation_instance = PerturbationFactory.get_perturbation(method, **kwargs)
-        perturbed_cfs = []
-        cfs = np.array([self.cfs[i][0] for i in range(len(self.cfs))])
-        
-        cfs_df: pd.DataFrame = self.model.transformer.inverse_transform(
-               self.data_interface.get_decoded_data(cfs))
-        optimized_c_i_prime = None
-        for idx, c_i in cfs_df.iterrows():
-            c_i_df = pd.DataFrame([c_i])
-            c_i_numerical = tf.constant(self.cfs[idx], dtype=tf.float32)
-            
-            c_i_prime_df = perturbation_instance.generate(c_i=c_i_df)
-            c_i_prime_numerical = tf.Variable(self.model.transformer.transform(c_i_prime_df),
-                                            dtype=tf.float32, trainable=True)
-            
-            perturbation_optimizer = tf.keras.optimizers.AdamW(learning_rate=1e-2)
-            perturbation_optimizer.build([c_i_prime_numerical])
-            prev_loss = np.inf
-            
-            for it in range(max_iter):
-                
-                with tf.GradientTape() as tape:
-                    tape.watch(c_i_prime_numerical)
-                    pred_i = self.predict_fn_with_grads(c_i_numerical)
-                    pred_i_prime = self.predict_fn_with_grads(c_i_prime_numerical)
-                    class_loss = tf.reduce_mean((pred_i - pred_i_prime) ** 2)
-                    distance = tf.norm(c_i_prime_numerical - c_i_numerical, ord=2)
-                    loss = class_loss - gamma * distance
-                grads = tape.gradient(loss, [c_i_prime_numerical])
-
-                grads *= self.freezer
-
-                if grads is None:
-                    break
-                
-                perturbation_optimizer.apply_gradients(zip(grads, [c_i_prime_numerical]))
-                
-                if abs(loss.numpy() - prev_loss) < tol:
-                    break
-                
-                prev_loss = loss.numpy()
-                
-            optimized_c_i_prime = pd.DataFrame(
-                self.model.transformer.inverse_transform(
-                self.data_interface.get_decoded_data(c_i_prime_numerical.numpy())
-            ), columns=cfs_df.columns)        
-            perturbed_cfs.append(optimized_c_i_prime)
-        perturbed_cfs_df = pd.concat(perturbed_cfs, ignore_index=True)
-        return perturbed_cfs_df
+            prev_loss = loss.numpy()
+        return tf.stop_gradient(c_i_prime)
     
-    def _preprocess_for_robustness(self, cfs: pd.DataFrame, perturbed_cfs: pd.DataFrame) -> tuple:
+    def _preprocess_for_robustness(self, cfs: tf.Tensor, perturbed_cfs: tf.Tensor) -> tuple:
 
-        continuous_cols = self.data_interface.continuous_feature_names
-        categorical_cols = self.data_interface.categorical_feature_names
+        def preprocess_continuous_features(cfs: tf.Tensor, num_bins=10) -> tf.Tensor:
+            edges = tf.linspace(0.0, 1.0, num=num_bins + 1)
+            all_one_hots = []
 
-        def preprocess_continuous_features(data: pd.DataFrame):
-            binarized = []
-            ranges = self.data_interface.get_features_range_float()[1]
+            for cont_idx in self.encoded_continuous_feature_indexes:
+                col_vals = cfs[:, cont_idx]
+                binned_indices = tf.searchsorted(edges, col_vals, side='left')
+                binned_indices = tf.clip_by_value(binned_indices, 0, num_bins - 1)
 
-            for col in continuous_cols:
-                col_min, col_max = ranges[col]
-                num_bins = 10
-                bins = np.linspace(col_min, col_max, num=num_bins + 1)
-                binned = np.digitize(data[col], bins, right=False)
-                binned = np.clip(binned, 0, len(bins) - 1)
-                one_hot = np.eye(len(bins))[binned]
-                binarized.append(one_hot)
-            return np.hstack(binarized)
+                one_hot_col = tf.one_hot(binned_indices, depth=num_bins, dtype=tf.float64)
+                all_one_hots.append(one_hot_col)
+            return tf.concat(all_one_hots, axis=1)
         
-        combined_data = pd.concat([cfs, perturbed_cfs])
-        combined_data[categorical_cols] = combined_data[categorical_cols].astype("str")
-        encoder = OneHotEncoder(sparse_output=False, handle_unknown="ignore")
-        encoder.fit(combined_data[categorical_cols])
-        
-        def preprocess_categorical_features(p_data: pd.DataFrame):
-            p_data[categorical_cols] = p_data[categorical_cols].astype("str")
-            encoded = encoder.transform(p_data[categorical_cols])
-            return encoded
-        
-        cfs_continuous = preprocess_continuous_features(cfs)
-        cfs_categorical = preprocess_categorical_features(cfs)
-        
-        perturbed_cfs_continuous = preprocess_continuous_features(perturbed_cfs)
-        perturbed_cfs_categorical = preprocess_categorical_features(perturbed_cfs)
+        cat_cols = [col for group in self.encoded_categorical_feature_indexes for col in group]
+        cat_cols = tf.constant(cat_cols, dtype=tf.int32)
+        cfs = tf.squeeze(cfs, axis=1)
 
-        cfs_processed = np.hstack([cfs_continuous, cfs_categorical])
-        perturbed_cfs_processed = np.hstack([perturbed_cfs_continuous, perturbed_cfs_categorical])
+        cfs_cats = tf.cast(tf.gather(cfs, cat_cols, axis=1), dtype=tf.float32)
+        perturbed_cfs_cats = tf.cast(tf.gather(perturbed_cfs, cat_cols, axis=1), dtype=tf.float32)
+
+        cfs_one_hot = preprocess_continuous_features(cfs)
+        perturbed_cfs_one_hot = preprocess_continuous_features(perturbed_cfs)
+
+        cfs_one_hot = tf.cast(cfs_one_hot, dtype=tf.float32)
+        perturbed_cfs_one_hot = tf.cast(perturbed_cfs_one_hot, dtype=tf.float32)
+
+        cfs_processed = tf.concat([cfs_one_hot, cfs_cats], axis=1)
+        perturbed_cfs_processed = tf.concat([perturbed_cfs_one_hot, perturbed_cfs_cats], axis=1)
 
         return cfs_processed, perturbed_cfs_processed
 
-    def compute_robustness_loss(self, perturbed_cfs_df: pd.DataFrame) -> float:
+    def compute_robustness_loss(self, perturbed_cfs: tf.Tensor) -> float:
         """
         Computes the robustness loss.
         Args:
@@ -392,20 +359,21 @@ class DiceTensorFlow2(ExplainerBase):
         Returns:
             float: Robustness loss in scalar.
         """
-        robustness_loss = 0.0
-        cfs = np.array([self.cfs[i][0] for i in range(len(self.cfs))])
-        cfs_df = self.model.transformer.inverse_transform(self.data_interface.get_decoded_data(cfs))
+        
+        cfs = tf.stack(self.cfs, axis=0)
 
-        cfs_processed, perturbed_cfs_processed = self._preprocess_for_robustness(cfs_df, perturbed_cfs_df)
-
+        cfs_processed, perturbed_cfs_processed = self._preprocess_for_robustness(cfs, perturbed_cfs)
+        intersection = tf.reduce_sum(tf.minimum(cfs_processed, perturbed_cfs_processed), axis=1)
         intersection = np.sum(np.minimum(cfs_processed, perturbed_cfs_processed), axis=1)
-        union = np.sum(cfs_processed, axis=1) + np.sum(perturbed_cfs_processed, axis=1)
-
+        union = tf.reduce_sum(cfs_processed, axis=1) + tf.reduce_sum(perturbed_cfs_processed, axis=1)
 
         epsilon = 1e-8
         sorensen_dice_coefficient = (2 * intersection) / (union + epsilon)
-        sorensen_dice_coefficient[np.isnan(sorensen_dice_coefficient)] = 1.0
-
+        sorensen_dice_coefficient = tf.where(
+            tf.math.is_nan(sorensen_dice_coefficient), 
+            tf.ones_like(sorensen_dice_coefficient), 
+            sorensen_dice_coefficient
+        )
         return tf.cast(tf.reduce_mean(sorensen_dice_coefficient), dtype=tf.float32)
     
 
@@ -500,13 +468,13 @@ class DiceTensorFlow2(ExplainerBase):
 
     def compute_loss(self, perturbation_method: str, **kwargs):
         """Computes the overall loss"""
-        perturbed_cfs_df = self.generate_perturbations_vectorized(method=perturbation_method,
+        perturbed_cfs = self.generate_perturbations_vectorized(method=perturbation_method,
                                                     **kwargs)
 
         self.yloss = self.compute_yloss()
         self.proximity_loss = self.compute_proximity_loss() if self.proximity_weight > 0 else 0.0
         self.diversity_loss = self.compute_diversity_loss() if self.diversity_weight > 0 else 0.0
-        self.robustness_loss = self.compute_robustness_loss(perturbed_cfs_df=perturbed_cfs_df) if self.robustness_weight > 0 else 0.0
+        self.robustness_loss = self.compute_robustness_loss(perturbed_cfs=perturbed_cfs) if self.robustness_weight > 0 else 0.0
         self.regularization_loss = self.compute_regularization_loss()
         self.loss = self.yloss + (self.proximity_weight * self.proximity_loss) - \
             (self.diversity_weight * self.diversity_loss) - \
@@ -602,13 +570,26 @@ class DiceTensorFlow2(ExplainerBase):
         else:
             self.loss_converge_iter = 0
             return False
+        
+
+    def _reset_loss_history(self):
+        self.loss_history = {key: [] for key in self.loss_history}
+
+    def _populate_loss_history(self, it, y_loss, proximity_loss, diversity_loss, regularization_loss, robustness_loss, total_loss):
+        self.loss_history["iterations"].append(it)
+        self.loss_history["y_loss"].append(y_loss)
+        self.loss_history["regularization_loss"].append(regularization_loss)
+        self.loss_history["diversity_loss"].append(diversity_loss)
+        self.loss_history["proximity_loss"].append(proximity_loss)
+        self.loss_history["robustness_loss"].append(robustness_loss)
+        self.loss_history["total_loss"].append(total_loss)
 
     def find_counterfactuals(self, query_instance, desired_class, optimizer, learning_rate, min_iter,
                              max_iter, project_iter, loss_diff_thres, loss_converge_maxiter, verbose,
                              init_near_query_instance, tie_random, stopping_threshold, posthoc_sparsity_param,
                              posthoc_sparsity_algorithm, limit_steps_ls, perturbation_method: str, **kwargs):
         """Finds counterfactuals by gradient-descent."""
-
+        self._reset_loss_history()
         query_instance = self.model.transformer.transform(query_instance).to_numpy()
         self.x1 = tf.constant(query_instance, dtype=tf.float32)
 
@@ -662,7 +643,6 @@ class DiceTensorFlow2(ExplainerBase):
             iterations = 0
             loss_diff = 1.0
             prev_loss = 0.0
-
             while self.stop_loop(iterations, loss_diff) is False:
 
                 # compute loss and tape the variables history
@@ -678,6 +658,10 @@ class DiceTensorFlow2(ExplainerBase):
 
                 # apply gradients and update the variables
                 self.optimizer.apply_gradients(zip(grads, self.cfs))
+
+                self._populate_loss_history(iterations, self.yloss, self.proximity_loss,
+                                            self.diversity_loss, self.regularization_loss,
+                                            self.robustness_loss, loss_value)
 
                 # projection step
                 for j in range(0, self.total_CFs):

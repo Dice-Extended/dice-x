@@ -764,10 +764,7 @@ class DiceGenetic(ExplainerBase):
             population_fitness = population_fitness[population_fitness[:, 1].argsort()]
             current_best_loss = population_fitness[0][1]
             self._populate_loss_history(iterations, self.yloss, self.sparsity_loss, self.proximity_loss, self.robustness_loss, current_best_loss)
-            print("population fitness shape is -> ", population_fitness.shape)
-            print("sparsity loss shape is -> ", self.sparsity_loss.shape)
-            print("proximity loss shape is -> ", self.proximity_loss.shape)
-            print("robustness loss shape is -> ", self.robustness_loss.shape)
+            
             to_pred = np.array([population[int(tup[0])] for tup in population_fitness[:self.total_CFs]])
 
             if self.total_CFs > 0:
