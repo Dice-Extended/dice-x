@@ -7,9 +7,9 @@ import torch
 from rai_test_utils.models.sklearn import (
     create_complex_classification_pipeline, create_complex_regression_pipeline)
 
-import dice_ml
-from dice_ml.utils import helpers
-from dice_ml.utils.neuralnetworks import FFNetwork
+import dice_ml_x
+from dice_ml_x.utils import helpers
+from dice_ml_x.utils.neuralnetworks import FFNetwork
 
 BACKENDS = ['sklearn', 'PYT']
 
@@ -21,20 +21,20 @@ def random_binary_classification_exp_object(request):
     backend, dinterface = request.param
     if dinterface == "public":
         dataset = helpers.load_custom_testing_dataset_binary()
-        d = dice_ml.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
+        d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     else:
-        d = dice_ml.Data(features={
+        d = dice_ml_x.Data(features={
                                    'Numerical': [0, 10],
                                    'Categorical': ['a', 'b', 'c',]},
                          outcome_name="Outcome")
     if backend == "PYT":
         torch.manual_seed(1)
         net = FFNetwork(4)
-        m = dice_ml.Model(model=net, backend=backend,  func="ohe-min-max")
+        m = dice_ml_x.Model(model=net, backend=backend,  func="ohe-min-max")
     else:
         model = _load_custom_testing_binary_model()
-        m = dice_ml.Model(model=model, backend=backend)
-    exp = dice_ml.Dice(d, m, method='random')
+        m = dice_ml_x.Model(model=model, backend=backend)
+    exp = dice_ml_x.DiceX(d, m, method='random')
     return exp
 
 
@@ -43,22 +43,22 @@ def random_str_binary_classification_exp_object(request):
     backend, dinterface = request.param
     if dinterface == "public":
         dataset = helpers.load_custom_testing_dataset_binary_str()
-        d = dice_ml.Data(
+        d = dice_ml_x.Data(
             dataframe=dataset, continuous_features=["Numerical"], outcome_name="Outcome"
         )
     else:
-        d = dice_ml.Data(
+        d = dice_ml_x.Data(
             features={"Numerical": [0, 5], "Categorical": ["a", "b", "c"]},
             outcome_name="Outcome",
         )
     if backend == "PYT":
         torch.manual_seed(1)
         net = FFNetwork(4)
-        m = dice_ml.Model(model=net, backend=backend, func="ohe-min-max")
+        m = dice_ml_x.Model(model=net, backend=backend, func="ohe-min-max")
     else:
         model = _load_custom_testing_binary_str_model()
-        m = dice_ml.Model(model=model, backend=backend)
-    exp = dice_ml.Dice(d, m, method="random")
+        m = dice_ml_x.Model(model=model, backend=backend)
+    exp = dice_ml_x.DiceX(d, m, method="random")
     return exp
 
 
@@ -68,19 +68,19 @@ def random_multi_classification_exp_object(request):
     backend, dinterface = request.param
     if dinterface == "public":
         dataset = helpers.load_custom_testing_dataset_multiclass()
-        d = dice_ml.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
+        d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     else:
-        d = dice_ml.Data(features={
+        d = dice_ml_x.Data(features={
                                    'Numerical': [7, 23],
                                    'Categorical': ['a', 'b', 'c']},
                          outcome_name="Outcome")
     if backend == "PYT":
         net = FFNetwork(4)
-        m = dice_ml.Model(model=net, backend=backend,  func="ohe-min-max")
+        m = dice_ml_x.Model(model=net, backend=backend,  func="ohe-min-max")
     else:
         model = _load_custom_testing_multiclass_model()
-        m = dice_ml.Model(model=model, backend=backend)
-    exp = dice_ml.Dice(d, m, method='random')
+        m = dice_ml_x.Model(model=model, backend=backend)
+    exp = dice_ml_x.DiceX(d, m, method='random')
     return exp
 
 
@@ -89,19 +89,19 @@ def random_str_multi_classification_exp_object(request):
     backend, dinterface = request.param
     if dinterface == "public":
         dataset = helpers.load_custom_testing_dataset_multiclass_str()
-        d = dice_ml.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
+        d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     else:
-        d = dice_ml.Data(features={
+        d = dice_ml_x.Data(features={
                                    'Numerical': [7, 23],
                                    'Categorical': ['a', 'b', 'c']},
                          outcome_name="Outcome")
     if backend == "PYT":
         net = FFNetwork(4)
-        m = dice_ml.Model(model=net, backend=backend,  func="ohe-min-max")
+        m = dice_ml_x.Model(model=net, backend=backend,  func="ohe-min-max")
     else:
         model = _load_custom_testing_multiclass_str_model()
-        m = dice_ml.Model(model=model, backend=backend)
-    exp = dice_ml.Dice(d, m, method='random')
+        m = dice_ml_x.Model(model=model, backend=backend)
+    exp = dice_ml_x.DiceX(d, m, method='random')
     return exp
 
 
@@ -110,19 +110,19 @@ def random_regression_exp_object(request):
     backend, dinterface = request.param
     if dinterface == 'public':
         dataset = helpers.load_custom_testing_dataset_regression()
-        d = dice_ml.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
+        d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     else:
-        d = dice_ml.Data(features={
+        d = dice_ml_x.Data(features={
                                    'Numerical': [7, 23],
                                    'Categorical': ['a', 'b', 'c']},
                          outcome_name="Outcome")
     if backend == "PYT":
         net = FFNetwork(4, is_classifier=False)
-        m = dice_ml.Model(model=net, backend=backend,  func="ohe-min-max", model_type='regressor')
+        m = dice_ml_x.Model(model=net, backend=backend,  func="ohe-min-max", model_type='regressor')
     else:
         model = _load_custom_testing_regression_model()
-        m = dice_ml.Model(model=model, backend=backend, model_type='regressor')
-    exp = dice_ml.Dice(d, m, method='random')
+        m = dice_ml_x.Model(model=model, backend=backend, model_type='regressor')
+    exp = dice_ml_x.DiceX(d, m, method='random')
     return exp
 
 
@@ -130,14 +130,14 @@ def random_regression_exp_object(request):
 def genetic_binary_classification_exp_object(request):
     backend = request.param
     dataset = helpers.load_custom_testing_dataset_binary()
-    d = dice_ml.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
+    d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     if backend == "PYT":
         net = FFNetwork(4)
-        m = dice_ml.Model(model=net, backend=backend,  func="ohe-min-max")
+        m = dice_ml_x.Model(model=net, backend=backend,  func="ohe-min-max")
     else:
         model = _load_custom_testing_binary_model()
-        m = dice_ml.Model(model=model, backend=backend)
-    exp = dice_ml.Dice(d, m, method='genetic')
+        m = dice_ml_x.Model(model=model, backend=backend)
+    exp = dice_ml_x.DiceX(d, m, method='genetic')
     return exp
 
 
@@ -145,16 +145,16 @@ def genetic_binary_classification_exp_object(request):
 def genetic_binary_str_classification_exp_object(request):
     backend = request.param
     dataset = helpers.load_custom_testing_dataset_binary_str()
-    d = dice_ml.Data(
+    d = dice_ml_x.Data(
         dataframe=dataset, continuous_features=["Numerical"], outcome_name="Outcome"
     )
     if backend == "PYT":
         net = FFNetwork(4)
-        m = dice_ml.Model(model=net, backend=backend, func="ohe-min-max")
+        m = dice_ml_x.Model(model=net, backend=backend, func="ohe-min-max")
     else:
         model = _load_custom_testing_binary_str_model()
-        m = dice_ml.Model(model=model, backend=backend)
-    exp = dice_ml.Dice(d, m, method="genetic")
+        m = dice_ml_x.Model(model=model, backend=backend)
+    exp = dice_ml_x.DiceX(d, m, method="genetic")
     return exp
 
 
@@ -162,10 +162,10 @@ def genetic_binary_str_classification_exp_object(request):
 def genetic_multi_classification_exp_object(request):
     backend = request.param
     dataset = helpers.load_custom_testing_dataset_multiclass()
-    d = dice_ml.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
+    d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     model = _load_custom_testing_multiclass_model()
-    m = dice_ml.Model(model=model, backend=backend)
-    exp = dice_ml.Dice(d, m, method='genetic')
+    m = dice_ml_x.Model(model=model, backend=backend)
+    exp = dice_ml_x.DiceX(d, m, method='genetic')
     return exp
 
 
@@ -173,10 +173,10 @@ def genetic_multi_classification_exp_object(request):
 def genetic_str_multi_classification_exp_object(request):
     backend = request.param
     dataset = helpers.load_custom_testing_dataset_multiclass_str()
-    d = dice_ml.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
+    d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     model = _load_custom_testing_multiclass_str_model()
-    m = dice_ml.Model(model=model, backend=backend)
-    exp = dice_ml.Dice(d, m, method='genetic')
+    m = dice_ml_x.Model(model=model, backend=backend)
+    exp = dice_ml_x.DiceX(d, m, method='genetic')
     return exp
 
 
@@ -184,14 +184,14 @@ def genetic_str_multi_classification_exp_object(request):
 def genetic_regression_exp_object(request):
     backend = request.param
     dataset = helpers.load_custom_testing_dataset_regression()
-    d = dice_ml.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
+    d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     if backend == "PYT":
         net = FFNetwork(4, is_classifier=False)
-        m = dice_ml.Model(model=net, backend=backend,  func="ohe-min-max", model_type='regressor')
+        m = dice_ml_x.Model(model=net, backend=backend,  func="ohe-min-max", model_type='regressor')
     else:
         model = _load_custom_testing_regression_model()
-        m = dice_ml.Model(model=model, backend=backend, model_type='regressor')
-    exp = dice_ml.Dice(d, m, method='genetic')
+        m = dice_ml_x.Model(model=model, backend=backend, model_type='regressor')
+    exp = dice_ml_x.DiceX(d, m, method='genetic')
     return exp
 
 
@@ -199,10 +199,10 @@ def genetic_regression_exp_object(request):
 def KD_binary_classification_exp_object():
     backend = 'sklearn'
     dataset = helpers.load_custom_testing_dataset_binary()
-    d = dice_ml.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
+    d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     model = _load_custom_testing_binary_model()
-    m = dice_ml.Model(model=model, backend=backend)
-    exp = dice_ml.Dice(d, m, method='kdtree')
+    m = dice_ml_x.Model(model=model, backend=backend)
+    exp = dice_ml_x.DiceX(d, m, method='kdtree')
     return exp
 
 
@@ -210,10 +210,10 @@ def KD_binary_classification_exp_object():
 def KD_binary_vars_classification_exp_object():
     backend = 'sklearn'
     dataset = load_custom_vars_testing_dataset()
-    d = dice_ml.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
+    d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     model = _load_custom_vars_dataset_model()
-    m = dice_ml.Model(model=model, backend=backend)
-    exp = dice_ml.Dice(d, m, method='kdtree')
+    m = dice_ml_x.Model(model=model, backend=backend)
+    exp = dice_ml_x.DiceX(d, m, method='kdtree')
     return exp
 
 
@@ -221,10 +221,10 @@ def KD_binary_vars_classification_exp_object():
 def KD_multi_classification_exp_object():
     backend = 'sklearn'
     dataset = helpers.load_custom_testing_dataset_multiclass()
-    d = dice_ml.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
+    d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     model = _load_custom_testing_multiclass_model()
-    m = dice_ml.Model(model=model, backend=backend)
-    exp = dice_ml.Dice(d, m, method='kdtree')
+    m = dice_ml_x.Model(model=model, backend=backend)
+    exp = dice_ml_x.DiceX(d, m, method='kdtree')
     return exp
 
 
@@ -232,10 +232,10 @@ def KD_multi_classification_exp_object():
 def KD_regression_exp_object():
     backend = 'sklearn'
     dataset = helpers.load_custom_testing_dataset_regression()
-    d = dice_ml.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
+    d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     model = _load_custom_testing_regression_model()
-    m = dice_ml.Model(model=model, backend=backend, model_type='regressor')
-    exp = dice_ml.Dice(d, m, method='kdtree')
+    m = dice_ml_x.Model(model=model, backend=backend, model_type='regressor')
+    exp = dice_ml_x.DiceX(d, m, method='kdtree')
     return exp
 
 
@@ -243,10 +243,10 @@ def KD_regression_exp_object():
 def binary_classification_exp_object(method="random"):
     backend = 'sklearn'
     dataset = helpers.load_custom_testing_dataset_binary()
-    d = dice_ml.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
+    d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     model = _load_custom_testing_binary_model()
-    m = dice_ml.Model(model=model, backend=backend)
-    exp = dice_ml.Dice(d, m, method=method)
+    m = dice_ml_x.Model(model=model, backend=backend)
+    exp = dice_ml_x.DiceX(d, m, method=method)
     return exp
 
 
@@ -254,10 +254,10 @@ def binary_classification_exp_object(method="random"):
 def multi_classification_exp_object(method="random"):
     backend = 'sklearn'
     dataset = helpers.load_custom_testing_dataset_multiclass()
-    d = dice_ml.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
+    d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     model = _load_custom_testing_multiclass_model()
-    m = dice_ml.Model(model=model, backend=backend)
-    exp = dice_ml.Dice(d, m, method=method)
+    m = dice_ml_x.Model(model=model, backend=backend)
+    exp = dice_ml_x.DiceX(d, m, method=method)
     return exp
 
 
@@ -265,38 +265,38 @@ def multi_classification_exp_object(method="random"):
 def regression_exp_object(method="random"):
     backend = 'sklearn'
     dataset = helpers.load_custom_testing_dataset_regression()
-    d = dice_ml.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
+    d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     model = _load_custom_testing_regression_model()
-    m = dice_ml.Model(model=model, backend=backend, model_type='regressor')
-    exp = dice_ml.Dice(d, m, method=method)
+    m = dice_ml_x.Model(model=model, backend=backend, model_type='regressor')
+    exp = dice_ml_x.DiceX(d, m, method=method)
     return exp
 
 
 @pytest.fixture(scope='session')
 def custom_public_data_interface():
     dataset = helpers.load_custom_testing_dataset_regression()
-    d = dice_ml.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
+    d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     return d
 
 
 @pytest.fixture(scope='session')
 def sklearn_binary_classification_model_interface():
     model = _load_custom_testing_binary_model()
-    m = dice_ml.Model(model=model, backend='sklearn', model_type='classifier')
+    m = dice_ml_x.Model(model=model, backend='sklearn', model_type='classifier')
     return m
 
 
 @pytest.fixture(scope='session')
 def sklearn_multiclass_classification_model_interface():
     model = _load_custom_testing_multiclass_model()
-    m = dice_ml.Model(model=model, backend='sklearn', model_type='classifier')
+    m = dice_ml_x.Model(model=model, backend='sklearn', model_type='classifier')
     return m
 
 
 @pytest.fixture(scope='session')
 def sklearn_regression_model_interface():
     model = _load_custom_testing_regression_model()
-    m = dice_ml.Model(model=model, backend='sklearn', model_type='regression')
+    m = dice_ml_x.Model(model=model, backend='sklearn', model_type='regression')
     return m
 
 
@@ -306,7 +306,7 @@ def public_data_object():
     Returns a public data object for the adult income dataset
     """
     dataset = helpers.load_adult_income_dataset()
-    return dice_ml.Data(dataframe=dataset, continuous_features=['age', 'hours_per_week'], outcome_name='income')
+    return dice_ml_x.Data(dataframe=dataset, continuous_features=['age', 'hours_per_week'], outcome_name='income')
 
 
 @pytest.fixture(scope='session')
@@ -326,7 +326,7 @@ def private_data_object():
          ('gender', ['Female', 'Male']),
          ('hours_per_week', [1, 99])]
     )
-    return dice_ml.Data(features=features_dict, outcome_name='income')
+    return dice_ml_x.Data(features=features_dict, outcome_name='income')
 
 
 def _load_custom_testing_model():

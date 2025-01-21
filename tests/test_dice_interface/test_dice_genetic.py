@@ -2,9 +2,9 @@ import pytest
 import sklearn
 from raiutils.exceptions import UserConfigValidationException
 
-import dice_ml
-from dice_ml.utils import helpers
-from dice_ml.utils.neuralnetworks import MulticlassNetwork
+import dice_ml_x
+from dice_ml_x.utils import helpers
+from dice_ml_x.utils.neuralnetworks import MulticlassNetwork
 
 
 class TestDiceGeneticBinaryClassificationMethods:
@@ -181,14 +181,14 @@ class TestDiceGeneticMultiClassificationMethods:
         label_enc = sklearn.preprocessing.LabelEncoder()
         dataset['Categorical'] = label_enc.fit_transform(dataset['Categorical'])
 
-        d = dice_ml.Data(dataframe=dataset, continuous_features=['Numerical', 'Categorical'], outcome_name='Outcome')
+        d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical', 'Categorical'], outcome_name='Outcome')
 
         # Load the neural network for multiclass classification and generate an explainer
         df = d.data_df
         num_class = len(df['Outcome'].unique())
         model = MulticlassNetwork(input_size=df.drop("Outcome", axis=1).shape[1], num_class=num_class)
-        m = dice_ml.Model(model=model, backend=backend)
-        exp = dice_ml.Dice(d, m, method=method)
+        m = dice_ml_x.Model(model=model, backend=backend)
+        exp = dice_ml_x.DiceX(d, m, method=method)
 
         # Test the function that returns the predictions
         _, _, preds = exp.build_KD_tree(

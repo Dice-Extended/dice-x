@@ -3,7 +3,7 @@ import json
 import pytest
 from raiutils.exceptions import UserConfigValidationException
 
-from dice_ml.counterfactual_explanations import CounterfactualExplanations
+from dice_ml_x.counterfactual_explanations import CounterfactualExplanations
 
 
 class TestCounterfactualExplanations:

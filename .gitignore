@@ -115,4 +115,8 @@ docs/notebooks/DiCE_with_advanced_options.ipynb
 docs/notebooks/DiCE_with_private_data.ipynb
 docs/notebooks/*.ipynb
 
-
+# compressed files
+.zip
+.rar
+.tar
+.7z

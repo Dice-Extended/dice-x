@@ -4,8 +4,8 @@ from rai_test_utils.datasets.tabular import (create_housing_data,
                                              create_iris_data)
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 
-import dice_ml
-from dice_ml.utils.exception import SystemException
+import dice_ml_x
+from dice_ml_x.utils.exception import SystemException
 
 
 class TestModelClassification:
@@ -21,7 +21,7 @@ class TestModelClassification:
             create_iris_data()
         trained_model = self.create_sklearn_random_forest_classifier(x_train, y_train)
 
-        diceml_model = dice_ml.Model(model=trained_model, backend='sklearn')
+        diceml_model = dice_ml_x.Model(model=trained_model, backend='sklearn')
         diceml_model.transformer.initialize_transform_func()
 
         assert diceml_model is not None
@@ -54,7 +54,7 @@ class TestModelRegression:
             create_housing_data()
         trained_model = self.create_sklearn_random_forest_regressor(x_train, y_train)
 
-        diceml_model = dice_ml.Model(model=trained_model, model_type='regressor', backend='sklearn')
+        diceml_model = dice_ml_x.Model(model=trained_model, model_type='regressor', backend='sklearn')
         diceml_model.transformer.initialize_transform_func()
 
         assert diceml_model is not None

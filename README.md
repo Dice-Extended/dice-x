@@ -29,7 +29,7 @@ conda install -c conda-forge dice-extended
 The following code piece provides an idea on how to generate counterfactual explanations with dice-extended (The code will be updated):
 
 ```python
-import dice_ml
+import dice_ml_x
 from dice_ml_x.utils import helpers
 from sklearn.model_selection import train_test_split
 
@@ -41,19 +41,19 @@ train_dataset, test_dataset, _, _ = train_test_split(
 )
 
 # Initialize Data and Model
-d = dice_ml.Data(
+d = dice_ml_x.Data(
     dataframe=train_dataset,
     continuous_features=['age', 'hours_per_week'],
     outcome_name='income'
 )
-m = dice_ml.Model(
+m = dice_ml_x.Model(
     model_path=dice_ml.utils.helpers.get_adult_income_modelpath(),
     backend='TF2',
     func="ohe-min-max"
 )
 
 # Generate Counterfactual Explanations
-exp = dice_ml.Dice(d, m)
+exp = dice_ml_x.DiceX(d, m)
 query_instance = test_dataset.drop(columns="income")[0:1]
 dice_exp = exp.generate_counterfactuals(
     query_instance, total_CFs=4, desired_class="opposite"
@@ -88,7 +88,77 @@ By adjusting the weights $\lambda_1$, $\lambda_2$, $\lambda_3$ counterfactual ex
 
 ## Evaluation
 
-This part will be written at the end of the study.
+For experimental purposes, $\lambda_3$, the coefficient of the robustness loss, is set to `0.2`. For counterfactual generation by considering the robustness **genetic algorithm** is adapted to the modified loss function given above.
+
+### Preliminary Evaluation
+
+Since computing robustness loss requires generating perturbed version of the counterfactual instance generated for a given original instance, a perturbation module is integrated to the project. In the module, `gaussian`, `spherical`, and `random` perturbation strategies are introduced. The Gaussian perturbation generation strategy generates perturbed counterfactual instances by uniformly perturbing the continuous features and randomly perturbing the categorical features. To guarantee the convergence `L-BFGS-B`*(Limited Broyden–Fletcher–Goldfarb–Shanno Bounded)* optimization algorithm and brute-force method are combined. For the remaining strategies brute-force approach is adopted. The outputs and the time required for generation of each strategies are given below.
+
+### 1. Counterfactual Generation with Gaussian Perturbation Strategy
+
+#### Original Instance
+
+|   | age | workclass | education | marital_status | occupation | race | gender | hours_per_week | income |
+|---|-----|-----------|-----------|----------------|------------|------|--------|----------------|--------|
+| 0 | 29  | Private   | HS-grad   | Married        | Blue-Collar | White | Female | 38           | 0      |
+
+#### Generated Counterfactuals
+
+|   | age | workclass | education | marital_status | occupation | race | gender | hours_per_week | income |
+|---|-----|-----------|-----------|----------------|------------|------|--------|----------------|--------|
+| 0 |	- |	- |	Assoc |	- |	Service |	- |	- |	- |	1 |
+| 1 |	30 |	- |	Bachelors |	- |	Professional |	- |	- |	- |	1 |
+| 2	| 27 |	- |	Assoc | 	- |	Service |	- |	- |	- |	1 |
+| 3	| -| 	- |	Assoc |	- |	Service |	- |	- |	40 |	1 |
+| 4 |	- |	- |	Bachelors |	- |	- |	- |	Male |	40 |	1 |
+
+#### Required Time(s)
+
+100%|██████████| 1/1 [01:02<00:00, 62.95s/it]
+
+### 2. Counterfactual Generation with Random Perturbation Strategy
+
+#### Original Instance
+
+|   | age | workclass | education | marital_status | occupation | race | gender | hours_per_week | income |
+|---|-----|-----------|-----------|----------------|------------|------|--------|----------------|--------|
+| 0 | 29  | Private   | HS-grad   | Married        | Blue-Collar | White | Female | 38           | 0      |
+
+#### Generated Counterfactuals
+
+|   | age | workclass | education | marital_status | occupation | race | gender | hours_per_week | income |
+|---|-----|-----------|-----------|----------------|------------|------|--------|----------------|--------|
+| 0 |	30 |	- |	Bachelors |	- |	Professional |	- |	- |	- |	1 |
+| 1 |	27 |	- |	Assoc |	- |	Service |	- |	- |	- |	1 |
+| 2 |	- |	- |	Bachelors |	- |	- |	- |	Male |	40 |	1 |
+| 3 |	- |	- |	Assoc |	- |	White-Collar |	- |	- |	40 |	1 |
+| 4 |	- |	- |	Bachelors |	- |	Sales |	- |	- |	40 |	1 |
+
+#### Required Time(s)
+
+100%|██████████| 1/1 [00:59<00:00, 59.46s/it]
+
+### 3. Counterfactual Generation with Spherical Perturbation Strategy
+
+#### Original Instance
+
+|   | age | workclass | education | marital_status | occupation | race | gender | hours_per_week | income |
+|---|-----|-----------|-----------|----------------|------------|------|--------|----------------|--------|
+| 0 | 29  | Private   | HS-grad   | Married        | Blue-Collar | White | Female | 38           | 0      |
+
+#### Generated Counterfactuals
+
+|   | age | workclass | education | marital_status |   occupation | race | gender | hours_per_week | income |
+|---|-----|-----------|-----------|----------------|--------------|------|--------|----------------|--------|
+| 0 |  30 |         - | Bachelors |              - | Professional |    - |      - |              - |      1 |
+| 0 |  27 |         - |     Assoc |              - |      Service |    - |      - |              - |      1 |
+| 0 |   - |         - | Bachelors |              - |            - |    - |   Male |             40 |      1 |
+| 0 |   - |         - |     Assoc |              - |      Service |    - |      - |             40 |      1 |
+| 0 |  30 |         - |   Masters |              - | Professional |    - |   Male |              - |      1 |
+
+#### Required Time(s)
+
+100%|██████████| 1/1 [01:13<00:00, 73.96s/it]
 
 ## Contributing
 
