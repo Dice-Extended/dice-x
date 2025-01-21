@@ -15,31 +15,20 @@ from time import time
 import torch
 
 from collections import OrderedDict
+from typing import List
+
 
 import absl.logging
 absl.logging.set_verbosity(absl.logging.ERROR)
 
 class Benchmarking:
-    def __init__(self, datasets: list, backends: list, perturbation_methods: list, metrics=None):
+    def __init__(self, datasets: List[tuple], backends: list, metrics=None):
         self.datasets = datasets
         self.backends = backends
-        self.perturbation_methods = perturbation_methods
         self.metrics = metrics if metrics else ["fidelity", "proximity", "diversity", "robustness"]
         self.models = {}
         self.results = {}
         self.sklearn_pipeline = None
-
-    def load_dataset(self, name):
-        if name == "compas-recidivism":
-            return helpers.load_compas_dataset(), 'twoyearrecid'
-        elif name == "adult-income":
-            return helpers.load_adult_income_dataset(), 'income'
-        elif name == "lending-club":
-            return helpers.load_lending_club_dataset(), 'loan_status'
-        elif name == "german-credit":
-            return helpers.load_german_credit_dataset(), 'credit_risk'
-        else:
-            raise ValueError(f"Unkown dataset: {name}")
         
     def split_data(self, df, target_col, test_size=0.2, random_state=42):
         target = df[target_col]
@@ -161,6 +150,77 @@ class Benchmarking:
             return self.train_pytorch_model(X, x_test)
         elif backend == 'TF2':
             return self.train_keras_model(X, x_test, epochs)
+        
+    def compute_stability(C_set_1: torch.Tensor, C_set_2: torch.Tensor, p: int=2) -> float:
+        return torch.mean(torch.cdist(C_set_1, C_set_2, p=2)).item()
+        
+    def compute_proximity(self, original_instance: torch.Tensor, C: torch.Tensor) -> float:
+        return torch.mean(torch.cdist(original_instance, C, p=1)).item()
+
+    def compute_diversity(self, C_ohe: torch.Tensor):
+        k = C_ohe.shape[0]
+        pairwise_dist = torch.cdist(C_ohe, C_ohe, p=2)
+        diversity = (torch.sum(pairwise_dist) - torch.sum(torch.diagonal(pairwise_dist))) / (k * (k - 1))
+        return diversity.item()
+    
+    def compute_validity(self, CFs: pd.DataFrame) -> float:
+        uniqe_rows, _ = CFs.drop_duplicates().shape
+        rows, _ = CFs.shape
+        return float(uniqe_rows) / float(rows)
+    
+    def do_perturbation(self, x: pd.DataFrame, data_class: dice_ml_x.Data):
+        x_tensor = torch.tensor(x.values, dtype=torch.float32)
+        continuous_feature_indexes = list(set(list(range(len(data_class.get_ohe_min_max_normalized_data(x).columns)))) - set(cat_cols))
+        categorical_feature_indexes = data_class.get_encoded_categorical_feature_indexes()
+        if continuous_feature_indexes:
+            
+            continuous_slice = x_tensor[:, continuous_feature_indexes]
+            noise = continuous_slice * 0.1
+            noise_mask = torch.zeros_like(x_tensor)
+            noise_mask[:, continuous_feature_indexes] = noise
+            x_tensor = x_tensor + noise_mask
+
+        if categorical_feature_indexes:
+            for cat_cols in categorical_feature_indexes:
+                cat_slice = x_tensor[:, cat_cols]
+                sample_size = cat_slice.shape[0]
+                num_cats = cat_slice.shape[1]
+
+                rand_idx = torch.randint(low=0, high=num_cats, size=(sample_size, ))
+
+                cat_slice_perturbed = torch.nn.functional.one_hot(rand_idx, num_classes=num_cats).float()
+
+                cat_mask = torch.zeros_like(x_tensor)
+                cat_mask[:, cat_cols] = cat_slice_perturbed
+                x_perturbed = x_tensor + cat_mask
+        return x_perturbed
+
+    def generate_perturbations(self, x_ohe: pd.DataFrame, data_class: dice_ml_x.Data,
+                               model: any, max_iter=100, tol=1e-3, gamma=1e-2):
+        x_ohe_tensor = torch.tensor(x_ohe.values, dtype=torch.float32, requires_grad=True)
+        x_perturbed = self.do_perturbation(x_ohe, data_class)
+        perturbation_optimizer = torch.optim.Adam([x_perturbed], lr=1e-3)
+
+        prev_loss = np.inf
+        for _ in range(max_iter):
+            with torch.no_grad():
+                model.model.eval()
+                pred_i = model.model(x_ohe_tensor)
+                pred_i_prime = model.model(x_perturbed)
+            class_loss = torch.mean((pred_i - pred_i_prime) ** 2)
+            distance = torch.norm(x_perturbed - x_ohe_tensor, p=2)
+            loss = class_loss + gamma * distance
+
+
+            perturbation_optimizer.zero_grad()
+            loss.backward()
+
+            perturbation_optimizer.step()
+            if abs(loss.item() - prev_loss) < tol:
+                break
+            prev_loss = loss.item()
+        return x_perturbed.detach()
+
     
     def load_and_train(self, batch_size, artefact_path=None):
         num_processes = len(self.datasets) * len(self.backends)
@@ -170,14 +230,11 @@ class Benchmarking:
         if not os.path.isdir(artefact_path):
             os.mkdir(artefact_path)
         with tqdm(total=num_processes, desc="Benchmarking", leave=True) as d_pbar:
-            for dataset_name in self.datasets:
-                
-                df, target_column = self.load_dataset(dataset_name)
-                
+            for df, target_column, dataset_name in self.datasets:
+
                 continuous_features = df.select_dtypes(include=[np.number]).columns.to_list()
                 continuous_features.remove(target_column)
                 self.results[dataset_name] = {}
-                model_items = {}
                 for backend in self.backends:
             
                     x_train_transformed, x_test_transformed, train_df, test_df, y_train, y_test = self.preprocess_data(backend=backend,
@@ -199,7 +256,8 @@ class Benchmarking:
                         'accuracy': accuracy,
                         'cfs': {},
                         'input_instance': {},
-                        'time': {}
+                        'time': {},
+                        'exp_history': {}
                     }
 
                     if backend == "PYT":
@@ -214,22 +272,22 @@ class Benchmarking:
                         backend_results['model'] = model
 
                     
-                    for method in self.perturbation_methods:
-                        print(f"the dataset is : {dataset_name}, the backend is : {backend}, the method is {method}")
+                    
+                    print(f"the dataset is : {dataset_name}, the backend is : {backend}")
                         
-                        cfs, input_instance, generation_time = self.generate_cfs(df,
-                                                                                 continuous_features,
-                                                                                 model,
-                                                                                 backend, method,
-                                                                                 target_column)
-                        backend_results['cfs'][method] = cfs
-                        backend_results['input_instance'][method] = input_instance
-                        backend_results['time'][method] = generation_time
-                        self.results[dataset_name][backend] = backend_results
+                    cfs, input_instance, generation_time, exp_loss_history = self.generate_cfs(df,
+                                                                                continuous_features,
+                                                                                model,
+                                                                                backend,
+                                                                                target_column)
+                    backend_results['cfs'] = cfs
+                    backend_results['input_instance'] = input_instance
+                    backend_results['time'] = generation_time
+                    backend_results['exp_history'] = exp_loss_history
+                    self.results[dataset_name][backend] = backend_results
                     d_pbar.set_postfix(OrderedDict(
                             dataset=dataset_name,
-                            backend=backend,
-                            method=method
+                            backend=backend
                     ))
                     d_pbar.update(1)
 
@@ -237,8 +295,9 @@ class Benchmarking:
     def generate_cfs(self, dataset: pd.DataFrame,
                      continuous_features: list,
                      model: any, model_backend: str,
-                     perturbation_method: str,
-                     target_name: str):
+                     target_name: str, total_CFS=10, proximity_weight=0.5,
+                     diversity_weight=1.0, robustness_weight=0.4,
+                     algorithm="DiverceCF", desired_class="opposite"):
         train_dataset, test_dataset, _, _ = self.split_data(dataset, target_name)
 
         x_train = train_dataset.drop(target_name, axis=1)
@@ -252,10 +311,6 @@ class Benchmarking:
             if col in dataset.columns:
                 cat_features[col] = dataset[col].unique().tolist()
 
-        if target_name in ['credit_risk', 'loan_status']:
-            d_frame = dataset
-        else:
-            d_frame = train_dataset
         if model_backend == "sklearn":
             exp_method = 'genetic'
             m = dice_ml_x.Model(model=model, backend=model_backend)
@@ -285,33 +340,33 @@ class Benchmarking:
             }
         } 
         start = time()
-        dice_exp = exp.generate_counterfactuals(x_test[1:2], total_CFs=5, perturbation_method=perturbation_method,
-                                        desired_class="opposite", **kwargs[perturbation_method])
+        explainer_options = OrderedDict(query_instances=x_test[1:2], total_CFS=total_CFS,
+                                        perturbation_method='gaussian', desired_class=desired_class, proximity_weight=proximity_weight,
+                                        diversity_weight=diversity_weight, robustness_weight=robustness_weight,
+                                        algorithm=algorithm, **kwargs['gaussian'])
+        dice_exp = exp.generate_counterfactuals(explainer_options)
         end = time()
         generation_time = (end-start)
-        return dice_exp.to_dataframe(), x_test[1:2], generation_time
-        
-        d = dice_ml_x.Data(dataframe=train_dataset, continuous_features=continuous_features, outcome_name=target_name)
-        m = dice_ml_x.Model(model=model, backend=model_backend)
-        categorical = x_train.columns.difference(continuous_features)
-
-        cat_features = {}
-        for col in categorical:
-            if col in dataset.columns:
-                cat_features[col] = dataset[col].unique().tolist()
-
-        if model_backend == "sklearn":
-            exp_method = 'genetic'
-        else:
-            exp_method = 'gradient'
-
-        exp = dice_ml_x.DiceX(d, m, method=exp_method)
-        cfes = exp.generate_counterfactuals(x_test[1:2], total_CFs=5, desired_class="opposite",
-                                        perturbation_method=perturbation_method, **kwargs[perturbation_method])
-        
-        return cfes.to_dataframe()
+        CFs_df = dice_exp.to_dataframe()
+        metrics_dict = self.compute_metrics(d, CFs_df, model, explainer_options['query_instances'],
+                                            target_name, exp, explainer_options)
+        return CFs_df, x_test[1:2], generation_time, exp.loss_history, metrics_dict
     
-    def compute_metrics():
-        return
-        
-
+    def compute_metrics(self, data_class: dice_ml_x.Data, C: pd.DataFrame,
+                        model: any, original_instance: pd.DataFrame,
+                        target_name: str, explainer: dice_ml_x.DiceX, explainer_options: OrderedDict) -> dict:
+        x_ohe_tensor = torch.tensor(data_class.get_ohe_min_max_normalized_data(original_instance).values, dtype=torch.float32)
+        x_ohe_tensor_targetless = torch.tensor(data_class.get_ohe_min_max_normalized_data(original_instance.drop(columns=[target_name], inplace=True)).values, dtype=torch.float32)
+        C_ohe = data_class.get_ohe_min_max_normalized_data(C)
+        C_ohe_tensor = torch.tensor(C_ohe.values, dtype=torch.float32)
+        proximity = self.compute_proximity(x_ohe_tensor, C_ohe_tensor)
+        diversity = self.compute_diversity(C_ohe_tensor)
+        x_ohe_prime_tensor = self.generate_perturbations(x_ohe_tensor_targetless, data_class, model)
+        explainer_options['query_instances'] = x_ohe_prime_tensor
+        C_prime_ohe_tensor = explainer.generate_counterfactuals(explainer_options)
+        robustness = self.compute_stability(C_ohe_tensor, C_prime_ohe_tensor)
+        return {
+            'proximity': proximity,
+            'diversity': diversity,
+            'robustness': robustness
+        }

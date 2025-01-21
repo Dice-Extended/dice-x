@@ -61,7 +61,7 @@ class DiceTensorFlow2(ExplainerBase):
             "diversity_loss": [],
             "regularization_loss": [],
             "robustness_loss": [],
-            "total_loss": [] 
+            "total_loss": []
         }
 
     def generate_counterfactuals(self, query_instance, total_CFs, desired_class="opposite", proximity_weight=0.5,
