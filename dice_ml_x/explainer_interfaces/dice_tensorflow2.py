@@ -64,7 +64,7 @@ class DiceTensorFlow2(ExplainerBase):
             "total_loss": []
         }
 
-    def generate_counterfactuals(self, query_instance, total_CFs, desired_class="opposite", proximity_weight=0.5,
+    def generate_counterfactuals(self, query_instances, total_CFs, desired_class="opposite", proximity_weight=0.5,
                                  diversity_weight=1.0, robustness_weight=0.5, categorical_penalty=0.1, algorithm="DiverseCF",
                                  features_to_vary="all", permitted_range=None, yloss_type="hinge_loss",
                                  diversity_loss_type="dpp_style:inverse_dist", feature_weights="inverse_mad",
@@ -146,7 +146,7 @@ class DiceTensorFlow2(ExplainerBase):
             self.update_hyperparameters(proximity_weight, diversity_weight, robustness_weight, categorical_penalty)
 
         final_cfs_df, test_instance_df, final_cfs_df_sparse = \
-            self.find_counterfactuals(query_instance, desired_class, optimizer,
+            self.find_counterfactuals(query_instances, desired_class, optimizer,
                                       learning_rate, min_iter, max_iter, project_iter,
                                       loss_diff_thres, loss_converge_maxiter, verbose,
                                       init_near_query_instance, tie_random, stopping_threshold,
@@ -301,7 +301,7 @@ class DiceTensorFlow2(ExplainerBase):
         
         return loss, grads
     
-    def generate_perturbations_vectorized(self, method: str, max_iter=100, tol=1e-3, gamma=1e-2, **kwargs):
+    def generate_perturbations_vectorized(self, max_iter=100, tol=1e-3, gamma=1e-2, **kwargs):
         
         c_i_prime = self.do_perturbation()
         c_i = tf.stack(self.cfs, axis=0)
@@ -466,10 +466,9 @@ class DiceTensorFlow2(ExplainerBase):
 
         return regularization_loss
 
-    def compute_loss(self, perturbation_method: str, **kwargs):
+    def compute_loss(self, **kwargs):
         """Computes the overall loss"""
-        perturbed_cfs = self.generate_perturbations_vectorized(method=perturbation_method,
-                                                    **kwargs)
+        perturbed_cfs = self.generate_perturbations_vectorized(**kwargs)
 
         self.yloss = self.compute_yloss()
         self.proximity_loss = self.compute_proximity_loss() if self.proximity_weight > 0 else 0.0
@@ -647,7 +646,7 @@ class DiceTensorFlow2(ExplainerBase):
 
                 # compute loss and tape the variables history
                 with tf.GradientTape() as tape:
-                    loss_value = self.compute_loss(perturbation_method=perturbation_method, **kwargs)
+                    loss_value = self.compute_loss(**kwargs)
                 
                 # get gradients
                 grads = tape.gradient(loss_value, self.cfs)
