@@ -566,10 +566,9 @@ class DicePyTorch(ExplainerBase):
     def _reset_loss_history(self):
         self.loss_history = {key: [] for key in self.loss_history}
 
-    def _populate_loss_history(self, it, y_loss, proximity_loss, diversity_loss, regularization_loss, robustness_loss, total_loss):
+    def _populate_loss_history(self, it, y_loss, proximity_loss, diversity_loss, robustness_loss, total_loss):
         self.loss_history["iterations"].append(it)
         self.loss_history["y_loss"].append(y_loss)
-        self.loss_history["regularization_loss"].append(regularization_loss)
         self.loss_history["diversity_loss"].append(diversity_loss)
         self.loss_history["proximity_loss"].append(proximity_loss)
         self.loss_history["robustness_loss"].append(robustness_loss)
@@ -648,8 +647,7 @@ class DicePyTorch(ExplainerBase):
                 
                 self._populate_loss_history(it, self.yloss.detach().item(), self.proximity_loss.detach().item(),
                                             self.diversity_loss.detach().item() if type(self.diversity_loss) == torch.Tensor else self.diversity_loss,
-                                            self.robustness_loss.item(), self.robustness_loss.detach().item(),
-                                            loss_value.detach().item())
+                                            self.robustness_loss.detach().item(), loss_value.detach().item())
 
                 # freeze features other than feat_to_vary_idxs
                 for ix in range(self.total_CFs):

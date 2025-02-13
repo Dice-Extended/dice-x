@@ -6,7 +6,6 @@ import random
 import timeit
 # To suppress TensorFlow warning about the optimizer running slowly on Apple chips.
 import absl.logging
-from sklearn.preprocessing import OneHotEncoder
 absl.logging.set_verbosity(absl.logging.ERROR)
 
 import numpy as np
@@ -16,7 +15,6 @@ import tensorflow as tf
 from dice_ml_x import diverse_counterfactuals as exp
 from dice_ml_x.counterfactual_explanations import CounterfactualExplanations
 from dice_ml_x.explainer_interfaces.explainer_base import ExplainerBase
-from dice_ml_x.perturbation_factory import PerturbationFactory
 
 
 class DiceTensorFlow2(ExplainerBase):
@@ -59,7 +57,6 @@ class DiceTensorFlow2(ExplainerBase):
             "y_loss": [],
             "proximity_loss": [],
             "diversity_loss": [],
-            "regularization_loss": [],
             "robustness_loss": [],
             "total_loss": []
         }
@@ -247,9 +244,9 @@ class DiceTensorFlow2(ExplainerBase):
 
         # optimizater initialization
         if opt_method == "adam":
-            self.optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=learning_rate)
+            self.optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
         elif opt_method == "rmsprop":
-            self.optimizer = tf.compat.v1.train.RMSPropOptimizer(learning_rate=learning_rate)
+            self.optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
 
 
     def do_perturbation(self):
@@ -385,14 +382,14 @@ class DiceTensorFlow2(ExplainerBase):
                 temp_loss = tf.pow((self.model.get_output(self.cfs[i]) - self.target_cf_class), 2)
                 temp_loss = temp_loss[:, (self.num_output_nodes-1):][0][0]
             elif self.yloss_type == "log_loss":
-                temp_logits = tf.compat.v1.log((tf.abs(
+                temp_logits = tf.math.log((tf.abs(
                     self.model.get_output(
                         self.cfs[i]) - 0.000001))/(1 - tf.abs(self.model.get_output(self.cfs[i]) - 0.000001)))
                 temp_logits = temp_logits[:, (self.num_output_nodes-1):]
                 temp_loss = tf.nn.sigmoid_cross_entropy_with_logits(
                     logits=temp_logits, labels=self.target_cf_class)[0][0]
             elif self.yloss_type == "hinge_loss":
-                temp_logits = tf.compat.v1.log((tf.abs(
+                temp_logits = tf.math.log((tf.abs(
                     self.model.get_output(
                         self.cfs[i]) - 0.000001))/(1 - tf.abs(self.model.get_output(self.cfs[i]) - 0.000001)))
                 temp_logits = temp_logits[:, (self.num_output_nodes-1):]
@@ -434,7 +431,7 @@ class DiceTensorFlow2(ExplainerBase):
                     det_entries.append(det_temp_entry)
 
         det_entries = tf.reshape(det_entries, [self.total_CFs, self.total_CFs])
-        diversity_loss = tf.compat.v1.matrix_determinant(det_entries)
+        diversity_loss = tf.linalg.det(det_entries)
         return diversity_loss
 
     def compute_diversity_loss(self):
@@ -574,10 +571,9 @@ class DiceTensorFlow2(ExplainerBase):
     def _reset_loss_history(self):
         self.loss_history = {key: [] for key in self.loss_history}
 
-    def _populate_loss_history(self, it, y_loss, proximity_loss, diversity_loss, regularization_loss, robustness_loss, total_loss):
+    def _populate_loss_history(self, it, y_loss, proximity_loss, diversity_loss, robustness_loss, total_loss):
         self.loss_history["iterations"].append(it)
         self.loss_history["y_loss"].append(y_loss)
-        self.loss_history["regularization_loss"].append(regularization_loss)
         self.loss_history["diversity_loss"].append(diversity_loss)
         self.loss_history["proximity_loss"].append(proximity_loss)
         self.loss_history["robustness_loss"].append(robustness_loss)
@@ -659,8 +655,7 @@ class DiceTensorFlow2(ExplainerBase):
                 self.optimizer.apply_gradients(zip(grads, self.cfs))
 
                 self._populate_loss_history(iterations, self.yloss, self.proximity_loss,
-                                            self.diversity_loss, self.regularization_loss,
-                                            self.robustness_loss, loss_value)
+                                            self.diversity_loss, self.robustness_loss, loss_value)
 
                 # projection step
                 for j in range(0, self.total_CFs):

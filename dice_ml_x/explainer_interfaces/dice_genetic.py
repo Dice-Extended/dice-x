@@ -215,7 +215,7 @@ class DiceGenetic(ExplainerBase):
         self.update_hyperparameters(proximity_weight, sparsity_weight, diversity_weight, robustness_weight, categorical_penalty)
 
 
-    def _generate_counterfactuals(self, query_instance, total_CFs, perturbation_method, initialization="kdtree",
+    def _generate_counterfactuals(self, query_instance, total_CFs, perturbation_method="gaussian", initialization="kdtree",
                                   desired_range=None, desired_class="opposite", proximity_weight=0.2,
                                   sparsity_weight=0.2, diversity_weight=4.0, robustness_weight=0.4,
                                   categorical_penalty=0.1, algorithm="DiverseCF", features_to_vary="all",

@@ -674,11 +674,11 @@ class Benchmarking:
         num_features = x_ohe_targetless_tf.shape[1]
         return {
             "min_max_proximity": [0.0, float(num_features)],
-            "proximity": proximity.numpy(),
+            "proximity": proximity,
             "min_max_diversity": [0.0, (tf.sqrt(tf.cast(num_features, tf.float32)) / 2.0).numpy()],
-            "diversity": diversity.numpy(),
-            "min_max_robustness": [0, tf.sqrt(tf.cast(num_features), tf.float32).numpy()],
-            "robustness": robustness.numpy(),
+            "diversity": diversity,
+            "min_max_robustness": [0, tf.sqrt(tf.cast(num_features, tf.float32)).numpy()],
+            "robustness": robustness,
             "num_features": num_features
         }
     

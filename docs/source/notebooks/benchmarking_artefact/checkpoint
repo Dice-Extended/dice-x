@@ -1,2 +1,2 @@
-model_checkpoint_path: "lending-club_TF2_model"
-all_model_checkpoint_paths: "lending-club_TF2_model"
+model_checkpoint_path: "german-credit_TF2_model"
+all_model_checkpoint_paths: "german-credit_TF2_model"
