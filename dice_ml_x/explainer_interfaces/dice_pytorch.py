@@ -525,6 +525,20 @@ class DicePyTorch(ExplainerBase):
             return temp_cfs
 
     
+    def get_validity_percentage(self):
+        cfs_np = np.array([cf.detach().cpu().numpy() for cf in self.cfs])
+        unique_cfs_np = np.unique(cfs_np, axis=0)
+        
+        predictions = [self.predict_fn(torch.tensor(cf).float()) for cf in unique_cfs_np]
+        
+        valid_count = 0
+        for pred in predictions:
+            if (self.target_cf_class == 0 and pred[0] <= self.stopping_threshold) or \
+            (self.target_cf_class == 1 and pred[0] >= self.stopping_threshold):
+                valid_count += 1
+
+        validity_percentage = (valid_count / len(self.cfs)) * 100.0
+        return validity_percentage
 
     def stop_loop(self, itr, loss_diff):
         """Determines the stopping condition for gradient descent."""
