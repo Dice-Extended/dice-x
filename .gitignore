@@ -120,3 +120,6 @@ docs/notebooks/*.ipynb
 .rar
 .tar
 .7z
+
+# macos
+.DS_Store
