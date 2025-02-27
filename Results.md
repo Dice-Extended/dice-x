@@ -34,34 +34,35 @@ Some of the calculations in this notebook may yield slightly different results a
 
 ### Explainers' Loss Chart
 
-During the counterfactual generation process we keep track of each losses computed for the optimization process. The chart below shows that the counterfactuals are optimized depending on various type of losses i.e., class loss, proximity loss, diversity loss, and robustness loss. The algorithm although reached a plateau around 50th iteration since the stopping criteria which is loss difference isn't met the loop keeps the calculations. The other stopping criteria is maximum number of iterations which is set to 5000. The chart is plotted without considering the weights for losses. 
+During the counterfactual generation process we kept track of each losses computed for the optimization process. The chart below shows that the counterfactuals are optimized depending on various types of losses i.e., class loss, proximity loss, diversity loss, and robustness loss. The algorithm although reached a plateau around 50th iteration since the stopping criteria which is loss difference isn't met the loop keeps the calculations. The other stopping criteria is maximum number of iterations which is set to 5000. The chart is plotted without considering the weights for losses.
 
 ![Explainer History](result_images/explainer_history.png)
 
 ### Metrics Chart
 
-We obtained different metrics that are diversity, proximity, sparsity specified in [Mothilal et al. (2020)](https://dl.acm.org/doi/10.1145/3351095.3372850). Additionally, we added robustness as the new metric. The chart below shows the results of these metrics with different datasets and counterfactual generation strategies.
+We obtained different metrics that are diversity, proximity, sparsity for generated counterfactuals specified in [Mothilal et al. (2020)](https://dl.acm.org/doi/10.1145/3351095.3372850). Additionally, we added robustness as the new metric. In the [DiCE]((https://dl.acm.org/doi/10.1145/3351095.3372850)) authors have generated counterfactuals iteratively from 1 to 10 for each dataset and computed the given metrics to asses the counterfactual generation process for different number of counterfactuals. The chart below shows the results of these metrics with different datasets and counterfactual generation strategies.
 
 ![Metric Chart](result_images/metrics_chart.png)
 
 ### Results on counterfactual datasets
 
-We trained 12 models for each four dataset and 3 counterfactual generation strategies. The table below shows the accuracy, f1 score, recall, precision, and auc scores on the test dataset.
+We generated 12 counterfactual datasets with 4 datasets that are adult income, german credit, lending club and compas recidivism datasets and with 3 counterfactual generation strategies that are sklearn, PyTorch, and Tensorflow. In sklearn we used the same algorithm with [Mothilal et al. (2020)](https://dl.acm.org/doi/10.1145/3351095.3372850), which is genetic, and for PyTorch and TensorFlow frameworks we used gradient based optimization algorithm i.e., Adam.
+We trained 12 models with these counterfactual datasets, and the table below shows the accuracy, f1 score, recall, precision, and auc scores on the test dataset for each model.
 
-| dataset           | backend | accuracy | f1_score | recall | precision | auc  |
-|-------------------|---------|----------|----------|--------|-----------|------|
-| adult-income      | sklearn | 0.98     | 0.99     | 0.99   | 0.98      | 0.98 |
-| adult-income      | PYT     | 0.99     | 0.99     | 1.00   | 1.00      | 1.00 |
-| adult-income      | TF2     | 1.00     | 1.00     | 1.00   | 0.99      | 1.00 |
-| compas-recidivism | sklearn | 1.00     | 1.00     | 1.00   | 1.00      | 1.00 |
-| compas-recidivism | PYT     | 1.00     | 1.00     | 1.00   | 1.00      | 1.00 |
-| compas-recidivism | TF2     | 1.00     | 1.00     | 1.00   | 1.00      | 1.00 |
-| german-credit     | sklearn | 0.97     | 0.97     | 0.97   | 0.97      | 0.97 |
-| german-credit     | PYT     | 1.00     | 1.00     | 1.00   | 1.00      | 1.00 |
-| german-credit     | TF2     | 1.00     | 1.00     | 1.00   | 1.00      | 1.00 |
-| lending-club      | sklearn | 0.92     | 0.92     | 0.87   | 0.98      | 0.92 |
-| lending-club      | PYT     | 0.99     | 0.99     | 1.00   | 1.00      | 1.00 |
-| lending-club      | TF2     | 0.99     | 0.99     | 0.98   | 1.00      | 0.99 |
+| dataset (counterfactual) | backend | accuracy | f1_score | recall | precision | auc  |
+|--------------------------|---------|----------|----------|--------|-----------|------|
+| adult-income             | sklearn | 0.98     | 0.99     | 0.99   | 0.98      | 0.98 |
+| adult-income             | PYT     | 0.99     | 0.99     | 1.00   | 1.00      | 1.00 |
+| adult-income             | TF2     | 1.00     | 1.00     | 1.00   | 0.99      | 1.00 |
+| compas-recidivism        | sklearn | 1.00     | 1.00     | 1.00   | 1.00      | 1.00 |
+| compas-recidivism        | PYT     | 1.00     | 1.00     | 1.00   | 1.00      | 1.00 |
+| compas-recidivism        | TF2     | 1.00     | 1.00     | 1.00   | 1.00      | 1.00 |
+| german-credit            | sklearn | 0.97     | 0.97     | 0.97   | 0.97      | 0.97 |
+| german-credit            | PYT     | 1.00     | 1.00     | 1.00   | 1.00      | 1.00 |
+| german-credit            | TF2     | 1.00     | 1.00     | 1.00   | 1.00      | 1.00 |
+| lending-club             | sklearn | 0.92     | 0.92     | 0.87   | 0.98      | 0.92 |
+| lending-club             | PYT     | 0.99     | 0.99     | 1.00   | 1.00      | 1.00 |
+| lending-club             | TF2     | 0.99     | 0.99     | 0.98   | 1.00      | 0.99 |
 
 The counterfactual datasets generated with 4 datasets and 3 different counterfactual generation strategies is investigated in terms of validity, diversity, and robustness.
 
@@ -109,13 +110,15 @@ Here we will show how the original datasets and counterfactual datasets lie on t
 
 ## Models' accuracies on all four datasets
 
-We trained two types of model with three different frameworks. Firstly, a tree model is created by using sci-kit learn framework's RandomForestClassifier with the datasets with default settings. The other two models are created with PyTorch and TensorFlow frameworks. These neural networks have two layers and the architecture is same as present in the DiCE repository as follows:
+Before we started the counterfactual generation process, we trained machine learning and neural network models with the original four datasets that are adult income, german credit, lending club, and compas recidivism datasets and three different types of models that are a random forest classifier, a neural network with PyTorch, and a neural network with TensorFlow.
+We trained two types of models with three different frameworks. Firstly, a tree model is created by using sci-kit learn framework's RandomForestClassifier with the datasets with default settings. The other two models are created with PyTorch and TensorFlow frameworks. These neural networks have two layers and the architecture is same as present in the DiCE repository as follows:
 
 $$
 Linear(number\_of\_features, 20) → ReLU → Linear(20, 1) → Sigmoid
 $$
 
 While training the neural networks following hyperparameters are used:
+
 - Learning rate: 0.001
 - Number of epochs: 10
 - Train dataset size: Dataset size * 80%
@@ -139,13 +142,11 @@ While training the neural networks following hyperparameters are used:
 |                   | Neural Network (PYT)     | 77.5%      |
 |                   | Neural Network (TF2)     | 78.5%      |
 
-
 As it can be seen from the table the models performed satisfying both with [Adult Income Dataset](https://archive.ics.uci.edu/dataset/2/adult) and the [Lending Club Dataset](https://www.lendingclub.com/). While models perform moderately on [German Credit Risk Dataset](https://archive.ics.uci.edu/static/public/144/statlog+german+credit+data.zip), they perform poorly on [Compas Recidivism Dataset](https://api.openml.org/data/download/22111929/dataset).
-
 
 ## Explainers' counterfactual generation time with different datasets
 
-Three types of explainers are generated for counterfactual generation that are genetic, PyTorch, and TensorFlow. Counterfactuals generated by genetic algorithm are generated with a genetic algorithm creates mutations with the best counterfactuals depending on the loss value. The gradient methods use Adam optimizer with a learning rate of $0.05$ and parameterize the counterfactuals to optimize counterfactuals. During the counterfactual generation process 5 counterfactuals has been created. The table below shows time spent for counterfactual generation for each model and dataset. PYT represents a neural network model created with PyTorch and TF2 represents a neural network model created with TensorFlow framework.
+Three types of explainers are generated for counterfactual generation that are genetic (sklearn), PyTorch (gradient - Adam), and TensorFlow (gradient - Adam). Counterfactuals generated by genetic algorithm are generated with a genetic algorithm creates mutations with the best counterfactuals depending on the loss value. The gradient methods use Adam optimizer with a learning rate of $0.05$ and parameterize the counterfactuals to optimize counterfactuals. During the counterfactual generation process 5 counterfactuals has been created. The table below shows time spent for counterfactual generation for each model and dataset. PYT represents a neural network model created with PyTorch and TF2 represents a neural network model created with TensorFlow framework.
 
 | Dataset           | Model          |   Time (s) |
 |:------------------|:---------------|------------:|
@@ -164,7 +165,6 @@ Three types of explainers are generated for counterfactual generation that are g
 
 ## Metrics and Sensitivity Analysis for Dice Extended
 
-
 ### 1. Robustness Metrics
 
 #### Dice-Sørensen Coefficient
@@ -177,6 +177,7 @@ Robustness(c_1, c_2) = \frac{2 * \lvert c_1 \cap c_2 \rvert}{\lvert c_1 \rvert +
 $$
 
 where:
+
 - $ c_1 $ and $ c_2 $ are binary vectors,
 - $ \lvert c_1 \cap c_2 \rvert $: The number of shared (overlapping) features between c1 and c2,
 - $ \lvert c_1 \rvert $ and $ \lvert c_2 \rvert $: The total number of features in each counterfactual.
@@ -215,11 +216,14 @@ In the section below we will do the required computation to calculate the stabil
 
 #### Result for Stability
 
-We computed the stability metric by converting the $C$ and $C'$ into a normalized vector that are of shape (10, 70) which means there are 10 samples with 70 features. The result of the calculation of stability under input perturbation is $~2.07$. When we consider the maximum distance between two vectors of shape (10, 70) maximum distance should equal to $~8.37$
+We computed the stability metric by converting the $C$ that is a counterfactuals set which has 10 counterfactual samples and $C'$ is the counterfactuals set that has the same number of counterfactuals as $C$ that is generated with $x'$ which is perturbed original instance. Firstly, $C$ is converted into a normalized vector that are of shape (10, n) which means there are 10 samples with n features. The result of the calculation of stability with the maximum possible value for each dataset under input perturbation is given below.
 
-$$
-\sqrt{70 \times (1 - 0)} = 8.37
-$$
+| Dataset (Original) | Stability | Stability (max) | #features (one-hot) |
+|--------------------|-----------|-----------------|---------------------|
+| adult-income       | 2.32      | 5.48            | 30                  |
+| lending-club       | 2.32      | 8.37            | 70                  |
+| german-credit      | 3.28      | 7.87            | 62                  |
+| adult-income       | 1.86      | 3.0             | 9                   |
 
 ### 2. Counterfactual Quality Measures
 
@@ -256,7 +260,14 @@ $$
 
 #### Result for Proximity
 
-We computed the proximity of $x$ and $C$ we converted them into normalized and one hot encoded tensors of shape (10, 70). The resulting total proximity between the original instance and generated counterfactuals is $7.65$ which is highly acceptable when we consider the maximum Manhattan distance between these two tensors which is $70$.
+We computed the proximity of $x$ and $C$ we converted them into normalized and one hot encoded tensors of shape (10, n). The resulting total proximity between the original instance and generated counterfactuals is given below in the table which is highly acceptable when we consider the maximum Manhattan distance between these two tensors.
+
+| Dataset (Original) | Proximity | Proximity (max) | #features (one-hot) |
+|--------------------|-----------|-----------------|---------------------|
+| adult-income       | 6.15      | 30              | 30                  |
+| lending-club       | 6.29      | 70              | 70                  |
+| german-credit      | 11.87     | 62              | 62                  |
+| adult-income       | 4.27      | 9               | 9                   |
 
 #### Diversity
 
@@ -270,7 +281,14 @@ where $k$ is the number of counterfactuals.
 
 #### Result for Diversity
 
-For the counterfactuals tensor we work with minimum diversity value is $0$ that indicates all counterfactuals are identical. For the condition that all counterfactuals are distinct that makes the diversity value maximum which is $~4.19$. The diversity value we calculated with the counterfactuals is $1.87$ which seems that counterfactuals have a moderate spread in the features space.
+For the counterfactuals tensor we work with minimum diversity value is $0$ that indicates all counterfactuals are identical. For the condition that all counterfactuals are distinct that makes the diversity value maximum which is $\sqrt{n}$ where $n$ is the number of features of the one hot encoded tensor. The diversity value we calculated with the counterfactuals for each datasets are given in the table below which seems that counterfactuals moderately spread in the features space.
+
+| Dataset (Original) | Diversity | Diversity (max) | #features (one-hot) |
+|--------------------|-----------|-----------------|---------------------|
+| adult-income       | 2.66      | 5.48            | 30                  |
+| lending-club       | 1.75      | 8.37            | 70                  |
+| german-credit      | 3.52      | 7.87            | 62                  |
+| adult-income       | 1.66      | 3.0             | 9                   |
 
 ### 3. Sensitivity Analysis
 
@@ -322,3 +340,7 @@ $$
 #### Robustness vs. Robustness Weight
 
 ![alt text](result_images/robustness_vs_robustness_weight.png)
+
+#### 3D visualization of $\lambda_1, \lambda_2, \lambda_3$
+
+![3D visualization of lambdas](result_images/3D_visualization.png)
