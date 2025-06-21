@@ -311,7 +311,7 @@ class DicePyTorch(ExplainerBase):
         if self.encoded_continuous_feature_indexes:
             
             continuous_slice = cfs_stacked[:, self.encoded_continuous_feature_indexes]
-            noise = continuous_slice * 0.3
+            noise = continuous_slice * 0.05
             noise_mask = torch.zeros_like(cfs_stacked)
             noise_mask[:, self.encoded_continuous_feature_indexes] = noise
             cfs_stacked = cfs_stacked + noise_mask

@@ -46,7 +46,9 @@ class Benchmarking:
         return train_dataset, test_dataset, y_train, y_test
       
         
-    def preprocess_data(self, backend: str, df: pd.DataFrame, continuous_features: list, target_name: str, batch_size: int):
+    def preprocess_data(self, backend: str, df: pd.DataFrame, continuous_features: list,
+                        target_name: str, batch_size: int, fitted_pipeline=None,
+                        pyt_scaler=None, pyt_encoder=None, pyt_label_encoder=None,):
         train_dataset, test_dataset, y_train, y_test = self.split_data(df, target_name)
         
         x_train = train_dataset.drop(target_name, axis=1)
@@ -64,18 +66,34 @@ class Benchmarking:
 
             self.sklearn_pipeline = Pipeline(steps=[('preprocessor', transformations),
                                 ('classifier', RandomForestClassifier())])
-            return x_train, x_test, train_dataset, test_dataset, y_train, y_test
+            return x_train, x_test, train_dataset, test_dataset, y_train, y_test, None, None, None, None
         elif backend == "PYT":
-            pyt_train_dataset = neuralnetworks.PYTDataset(df, target_column=target_name, train=True)
-            pyt_test_dataset = neuralnetworks.PYTDataset(df, target_column=target_name, train=False)
+            if pyt_scaler:
+                pyt_train_dataset = neuralnetworks.PYTDataset(df, scaler=pyt_scaler,
+                                                              encoder=pyt_encoder,
+                                                              target_encoder=pyt_label_encoder,
+                                                              target_column=target_name, train=True)
+                scaler = pyt_train_dataset.scaler
+                encoder = pyt_train_dataset.encoder
+                target_encoder = pyt_train_dataset.target_encoder
+                pyt_test_dataset = neuralnetworks.PYTDataset(df, scaler=scaler,
+                                                             encoder=encoder,
+                                                              target_encoder=target_encoder,
+                                                               target_column=target_name, train=False)
+            else:
+                pyt_train_dataset = neuralnetworks.PYTDataset(df, target_column=target_name, train=True)
+                pyt_test_dataset = neuralnetworks.PYTDataset(df, target_column=target_name, train=False)
             train_df = pyt_train_dataset.train_dataset_df
             test_df = pyt_train_dataset.test_dataset_df
             y_train_df = pyt_train_dataset.y_train_df
             y_test_df = pyt_train_dataset.y_test_df
+            scaler = pyt_train_dataset.scaler
+            encoder = pyt_train_dataset.encoder
+            target_encoder = pyt_train_dataset.target_encoder
             pyt_train_dataloader = DataLoader(pyt_train_dataset, batch_size=batch_size, shuffle=True)
             pyt_test_dataloader = DataLoader(pyt_test_dataset, batch_size=batch_size // 4, shuffle=False)
             
-            return pyt_train_dataloader, pyt_test_dataloader, train_df, test_df, y_train_df, y_test_df
+            return pyt_train_dataloader, pyt_test_dataloader, train_df, test_df, y_train_df, y_test_df, None, scaler, encoder, target_encoder
         elif backend == "TF2":
             categorical = x_train.columns.difference(continuous_features)
 
@@ -91,7 +109,12 @@ class Benchmarking:
                 sparse_threshold=0
             )
 
-            transformation_pipeline = transformations.fit(x_train)
+            if fitted_pipeline == None:
+                transformation_pipeline = transformations.fit(x_train)
+            else:
+                transformation_pipeline = fitted_pipeline
+
+
 
             x_train_transformed_data = transformation_pipeline.transform(x_train)
             x_test_transformed_data = transformation_pipeline.transform(x_test)
@@ -102,7 +125,7 @@ class Benchmarking:
             tf_train_dataset = tf_train_dataset.shuffle(len(x_train)).batch(batch_size)
             tf_test_dataset = tf_test_dataset.batch(batch_size=batch_size)
 
-            return tf_train_dataset, tf_test_dataset, train_dataset, test_dataset, y_train, y_test
+            return tf_train_dataset, tf_test_dataset, train_dataset, test_dataset, y_train, y_test, transformation_pipeline, None, None, None
     
     def train_random_forest(self, x_train, y_train) -> Pipeline:
         self.sklearn_pipeline.fit(x_train, y_train)

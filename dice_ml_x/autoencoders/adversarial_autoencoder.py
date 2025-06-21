@@ -1,4 +1,4 @@
-from base_autoencoder import _BaseAutoEncoder
+from dice_ml_x.autoencoders.base_autoencoder import _BaseAutoEncoder
 from torch import nn
 
 class AdversarialAutoEncoder(_BaseAutoEncoder):

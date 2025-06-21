@@ -1,4 +1,4 @@
-from base_autoencoder import _BaseAutoEncoder
+from dice_ml_x.autoencoders.base_autoencoder import _BaseAutoEncoder
 from torch import nn
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -76,8 +76,11 @@ class StandardAutoEncoder(_BaseAutoEncoder):
         if isinstance(X, np.ndarray):
             X = torch.from_numpy(X).float()
         
-        dataset = TensorDataset(X)
-        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+            dataset = TensorDataset(X)
+            dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+        if isinstance(X, DataLoader):
+            dataloader = X
 
         for epoch in range(epochs):
             total_loss = 0
@@ -95,7 +98,7 @@ class StandardAutoEncoder(_BaseAutoEncoder):
 
                 total_loss += loss.item()
 
-                progress_bar.set_postfix(loss=f"{loss.item():.4f}")
+                progress_bar.set_postfix(batch_loss=f"{loss.item():.4f}")
             
             average_loss = total_loss / len(dataloader)
             self._history['loss'].append(average_loss)
@@ -104,5 +107,5 @@ class StandardAutoEncoder(_BaseAutoEncoder):
                 self.save_model(f"autoencoder_model_{epoch}")
 
             if verbose:
-                print(f"Epoch [{epoch + 1}/{epochs}], Loss: {average_loss:.4f}")
+                print(f"Epoch [{epoch + 1}/{epochs}], Overall Loss: {average_loss:.4f}")
         print("Training finished!")

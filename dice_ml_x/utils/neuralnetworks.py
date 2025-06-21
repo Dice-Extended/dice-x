@@ -69,6 +69,8 @@ class PYTDataset(torch.utils.data.Dataset):
         categorical_cols = self.features.columns.difference(numerical_cols)
         if self.scaler is None and len(numerical_cols) > 0:
             self.scaler = StandardScaler().fit(self.features[numerical_cols])
+        else:
+            self.scaler.fit(self.features[numerical_cols])
 
         if self.encoder is None and len(categorical_cols) > 0:
             self.encoder = OneHotEncoder(sparse_output=False,
@@ -85,8 +87,10 @@ class PYTDataset(torch.utils.data.Dataset):
             self.features = pd.concat([self.features, encoded_cat_df], axis=1)
 
         if self.target.dtype == 'object' or str(self.target.dtype) == 'category':
-            target_encoder = LabelEncoder()
-            self.target = target_encoder.fit_transform(self.target)
+            if self.target_encoder is None:
+                self.target_encoder = LabelEncoder()
+                self.target_encoder.fit(self.target)
+            self.target = self.target_encoder.transform(self.target)
         else:
             target_encoder = None
 
