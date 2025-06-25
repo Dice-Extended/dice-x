@@ -123,3 +123,9 @@ docs/notebooks/*.ipynb
 
 # macos
 .DS_Store
+
+
+# folders
+experiments/cfs/
+experiments/charts/
+experiments/model_artefacts/
