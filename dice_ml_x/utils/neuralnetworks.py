@@ -125,7 +125,7 @@ class PYTDataset(torch.utils.data.Dataset):
 
 
 class PYTModel(nn.Module):
-    def __init__(self, in_features):
+    def __init__(self, in_features, model_save_dir: str):
         super(PYTModel, self).__init__()
         self.model = nn.Sequential(
             nn.Linear(in_features, 20),
@@ -143,6 +143,7 @@ class PYTModel(nn.Module):
             'optimizer_state_dict': []
         }
         self.best_val_acc = 0.0
+        self.model_save_dir = model_save_dir
 
         
 
@@ -173,7 +174,7 @@ class PYTModel(nn.Module):
             for batch_idx, batch in enumerate(train_dataloader):
                 features, labels = batch
                 features = features.to(device)
-                labels = labels.float().to(device).unsqueeze(1)
+                labels = labels.to(device).float().view(-1, 1)
                 outputs = self.model(features)
                 loss = criterion(outputs, labels)
                 loss.backward()
@@ -195,7 +196,7 @@ class PYTModel(nn.Module):
             
             for _, test_batch in enumerate(test_dataloader):
                 test_features, test_labels = test_batch
-                test_features, test_labels = test_features.to(device), test_labels.float().to(device).unsqueeze(1)
+                test_features, test_labels = test_features.to(device), test_labels.to(device).float().view(-1, 1)
                 with torch.no_grad():
                     
                     test_outputs = self.model(test_features)
@@ -214,18 +215,13 @@ class PYTModel(nn.Module):
             self.history['model_state_dict'].append(copy.deepcopy(self.model.state_dict()))
                 
         if save:
-            self.save_model(self.history)
+            self.save_model(self.history, self.model_save_dir)
     
 
-    def save_model(self, history, model_path=None):
-        artefacts_dir = 'pytorch_artefacts'
-        model_file_name = f'pyt_model_{time.time()}.pth'
-        if model_path is not None and os.path.isdir(model_path):
-            torch.save(history, os.path.join(model_path, model_file_name))
-        else:
-            if not os.path.isdir(artefacts_dir):
-                os.mkdir(artefacts_dir)
-            torch.save(history, os.path.join(artefacts_dir, model_file_name))
+    def save_model(self, root_dir: str):
+        model_file_name = f'pyt_model_{time.time()}.pt'
+        os.makedirs(root_dir, exist_ok=True)
+        torch.save(self.history, os.path.join(root_dir, model_file_name))
 
 class FFNetwork(nn.Module):
     def __init__(self, input_size, is_classifier=True):

@@ -149,13 +149,14 @@ class Benchmarking:
         }
     
     
-    def train_pytorch_model(self, train_dataloader, test_dataloader):
+    def train_pytorch_model(self, train_dataloader: DataLoader, test_dataloader, model_save_dir, epochs=20):
 
         dummy_inputs, _ = next(iter(train_dataloader))
         in_features = dummy_inputs.shape[1]
-        trainer = neuralnetworks.PYTModel(in_features)
-        trainer.train(train_dataloader=train_dataloader, test_dataloader=test_dataloader)
-        return trainer.model
+        n_classes = len(train_dataloader.dataset.y_train_df.unique())
+        trainer = neuralnetworks.PYTModel(in_features, model_save_dir)
+        trainer.train(train_dataloader=train_dataloader, test_dataloader=test_dataloader, epochs=epochs)
+        return trainer, trainer.model
     
     def compute_pytorch_metrics(self, model, test_dataloader: torch.utils.data.DataLoader) -> dict:
         device = 'cuda' if torch.cuda.is_available() else 'cpu'

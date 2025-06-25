@@ -21,12 +21,14 @@ class PyTorchModel(BaseModel):
         """
 
         super().__init__(model, model_path, backend, func, kw_args)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
 
     def load_model(self):
         if self.model_path != '':
-            self.model = torch.load(self.model_path)
+            self.model = torch.load(self.model_path, weights_only=False)
+            self.model.to(self.device)
 
-    def get_output(self, input_instance, model_score=True,
+    '''def get_output(self, input_instance, model_score=True,
                    transform_data=False, out_tensor=False):
         """returns prediction probabilities
 
@@ -43,7 +45,30 @@ class PyTorchModel(BaseModel):
             out = out.data.numpy()
         if model_score is False and self.model_type == ModelTypes.Classifier:
             out = np.round(out)  # TODO need to generalize for n-class classifier
+        return out'''
+    
+    def get_output(self, input_instance, model_score=True,
+               transform_data=False, out_tensor=False):
+        """returns prediction probabilities, ensuring device alignment"""
+
+        if transform_data or not torch.is_tensor(input_instance):
+            arr = self.transformer.transform(input_instance).to_numpy(dtype=np.float32)    # type: ignore
+            input_tensor = torch.from_numpy(arr)
+        else:
+            input_tensor = input_instance
+        model_dev = next(self.model.parameters()).device
+        input_tensor = input_tensor.to(model_dev)
+
+        out = self.model(input_tensor).float()
+
+        if not out_tensor:
+            out = out.detach().cpu().numpy()
+
+        if model_score is False and self.model_type == ModelTypes.Classifier:
+            out = np.round(out)
+
         return out
+
 
     def set_eval_mode(self):
         self.model.eval()

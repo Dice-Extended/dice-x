@@ -74,6 +74,11 @@ def decide(model_interface, method):
             # PyTorch backend
             from dice_ml_x.explainer_interfaces.dice_pytorch import DicePyTorch
             return DicePyTorch
+        
+        elif model_interface.backend == BackEndTypes.DPPytorch:
+            from dice_ml_x.explainer_interfaces.dp_dice_pytorch import DicePyTorchDP
+            return DicePyTorchDP
+        
         else:
             raise UserConfigValidationException(
                     "{0} is only supported for differentiable neural network models. "

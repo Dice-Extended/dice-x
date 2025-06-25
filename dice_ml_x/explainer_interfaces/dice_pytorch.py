@@ -54,6 +54,7 @@ class DicePyTorch(ExplainerBase):
             "robustness_loss": [],
             "total_loss": [] 
         }
+        self.model.model.to('cpu')
 
     def _generate_counterfactuals(self, query_instance, total_CFs,
                                   desired_class="opposite", desired_range=None,
@@ -165,8 +166,9 @@ class DicePyTorch(ExplainerBase):
 
     def predict_fn_for_sparsity(self, input_instance):
         """prediction function for sparsity correction"""
-        input_instance = self.model.transformer.transform(input_instance).to_numpy()[0]
-        return self.predict_fn(torch.tensor(input_instance).float())
+        input_instance_np = self.model.transformer.transform(input_instance).to_numpy()[0]
+        input_instance_np = input_instance_np.astype(np.float32)
+        return self.predict_fn(torch.tensor(input_instance_np))
 
     def do_cf_initializations(self, total_CFs, algorithm, features_to_vary):
         """Intializes CFs and other related variables."""
@@ -403,7 +405,7 @@ class DicePyTorch(ExplainerBase):
             edges = torch.linspace(0.0, 1.0, steps=num_bins + 1)
             all_one_hots = []
             for cont_idx in self.encoded_continuous_feature_indexes:
-                col_vals = cfs[:, cont_idx]
+                col_vals = cfs[:, cont_idx].contiguous()
                 binned_indices = torch.bucketize(col_vals, edges, right=False) - 1
                 binned_indices = torch.clamp(binned_indices, 0, num_bins - 1)
 
@@ -480,9 +482,9 @@ class DicePyTorch(ExplainerBase):
             for i in range(len(self.minx[0])):
                 if i in self.feat_to_vary_idxs:
                     if init_near_query_instance:
-                        self.cfs[n].data[i] = query_instance[i]+(n*0.01)
+                        self.cfs[n].data[i] = float(query_instance[i]+(n*0.01))
                     else:
-                        self.cfs[n].data[i] = np.random.uniform(self.minx[0][i], self.maxx[0][i])
+                        self.cfs[n].data[i] = float(np.random.uniform(self.minx[0][i], self.maxx[0][i]))
                 else:
                     self.cfs[n].data[i] = query_instance[i]
 
@@ -595,10 +597,12 @@ class DicePyTorch(ExplainerBase):
         """Finds counterfactuals by gradient-descent."""
 
         self._reset_loss_history()
-        query_instance = self.model.transformer.transform(query_instance).to_numpy()[0]
-        self.x1 = torch.tensor(query_instance)
+        query_instance_np = self.model.transformer.transform(
+        query_instance).to_numpy(dtype=np.float32)[0]
+
+        self.x1 = torch.from_numpy(query_instance_np)
         # find the predicted value of query_instance
-        test_pred = self.predict_fn(torch.tensor(query_instance).float())[0]
+        test_pred = self.predict_fn(torch.tensor(query_instance_np).float())[0]
         if desired_class == "opposite":
             desired_class = 1.0 - np.round(test_pred)
         self.target_cf_class = torch.tensor(desired_class).float()
@@ -637,9 +641,9 @@ class DicePyTorch(ExplainerBase):
         for loop_ix in range(loop_find_CFs):
             # CF init
             if self.total_random_inits > 0:
-                self.initialize_CFs(query_instance, False)
+                self.initialize_CFs(query_instance_np, False)
             else:
-                self.initialize_CFs(query_instance, init_near_query_instance)
+                self.initialize_CFs(query_instance_np, init_near_query_instance)
 
             # initialize optimizer
             self.do_optimizer_initializations(optimizer, learning_rate)
@@ -723,7 +727,7 @@ class DicePyTorch(ExplainerBase):
                         self.cfs_preds[loop_ix+ix] = copy.deepcopy(self.best_backup_cfs_preds[loop_ix+ix])
 
         # convert to the format that is consistent with dice_tensorflow
-        query_instance = np.array([query_instance], dtype=np.float32)
+        query_instance = np.array([query_instance_np], dtype=np.float32)
         for tix in range(max(loop_find_CFs, self.total_CFs)):
             self.final_cfs[tix] = np.array([self.final_cfs[tix]], dtype=np.float32)
             self.cfs_preds[tix] = np.array([self.cfs_preds[tix]], dtype=np.float32)
@@ -745,8 +749,10 @@ class DicePyTorch(ExplainerBase):
         cfs_preds = [item for sublist in cfs_preds for item in sublist]
         final_cfs_df[self.data_interface.outcome_name] = np.array(cfs_preds)
 
+        query_instance_2d = np.array([query_instance_np])
+
         test_instance_df = self.model.transformer.inverse_transform(
-                self.data_interface.get_decoded_data(query_instance))
+                self.data_interface.get_decoded_data(query_instance_2d))
         test_instance_df[self.data_interface.outcome_name] = np.array(np.round(test_pred, 3))
 
         # post-hoc operation on continuous features to enhance sparsity - only for public data

@@ -4,4 +4,21 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "ipykernel>=6.29.5",
+    "jsonschema>=4.24.0",
+    "kneed>=0.8.5",
+    "matplotlib>=3.10.3",
+    "pandas>=2.3.0",
+    "pip>=25.1.1",
+    "prefect>=3.4.6",
+    "raiutils>=0.4.2",
+    "scikit-learn>=1.7.0",
+    "tensorflow>=2.19.0",
+    "torch==2.7.1",
+    "torchaudio>=2.7.1",
+    "torcheval>=0.0.7",
+    "torchvision>=0.22.1",
+    "tqdm>=4.67.1",
+    "ucimlrepo>=0.0.7",
+]

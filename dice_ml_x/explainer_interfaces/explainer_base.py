@@ -522,7 +522,9 @@ class ExplainerBase(ABC):
 
     def predict_fn_for_sparsity(self, input_instance):
         """prediction function for sparsity correction"""
-        return self.model.get_output(input_instance)
+        input_instance_np = self.model.transformer.transform(input_instance).to_numpy(dtype=np.float32)[0]
+        input_instance_np = input_instance_np.astype(np.float32)
+        return self.model.get_output(input_instance_np)
 
     def do_posthoc_sparsity_enhancement(self, final_cfs_sparse, query_instance, posthoc_sparsity_param,
                                         posthoc_sparsity_algorithm, limit_steps_ls):

@@ -10,6 +10,7 @@ from torch import nn
 from abc import ABC, abstractmethod
 import numpy as np
 import json
+from torch.utils.data import DataLoader
 
 class _BaseAutoEncoder(nn.Module, ABC):
     """
@@ -29,7 +30,7 @@ class _BaseAutoEncoder(nn.Module, ABC):
         self._history: dict = {'loss': []}
 
     @abstractmethod
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Implements forward pass through the auto encoder.
 
@@ -42,7 +43,16 @@ class _BaseAutoEncoder(nn.Module, ABC):
         raise NotImplementedError("forward() method must be implemented in the subclass")
     
     @abstractmethod
-    def train_autoencoder(self, X: torch.Tensor, epochs: int=10, batch_size: int=16, learning_rate: float=1e-3, verbose: bool=True) -> None:
+    def train_autoencoder(self, X: torch.Tensor | np.ndarray | DataLoader,
+        *,
+        epochs: int = 10,
+        batch_size: int = 128,
+        learning_rate: float = 1e-3,
+        epsilon: float = 1.0,
+        verbose: bool = True,
+        device: torch.device | str = "cpu",
+        save_model: bool = False,
+        save_interval: int = 5,) -> None:
         """
         Trains the autoencoder with given parameters.
 

@@ -74,7 +74,7 @@ def decide(backend):
             KerasTensorFlowModel
         return KerasTensorFlowModel
 
-    elif backend == BackEndTypes.Pytorch:
+    elif backend == BackEndTypes.Pytorch or backend == BackEndTypes.DPPytorch:
         # PyTorch backend
         try:
             import torch  # noqa: F401

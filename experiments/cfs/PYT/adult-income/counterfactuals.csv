@@ -1,0 +1,11 @@
+age,workclass,education,marital_status,occupation,race,gender,hours_per_week,income
+90,Private,Some-college,Single,Blue-Collar,White,Male,20,0.72
+26,Other/Unknown,Some-college,Widowed,Sales,Other,Male,28,0.66
+19,Private,Some-college,Divorced,Blue-Collar,White,Female,44,0.748
+18,Other/Unknown,Some-college,Single,Sales,Other,Male,68,0.699
+90,Other/Unknown,Bachelors,Divorced,Other/Unknown,White,Male,35,0.767
+67,Other/Unknown,Some-college,Single,Other/Unknown,Other,Female,40,0.681
+17,Private,Bachelors,Widowed,White-Collar,White,Male,39,0.716
+90,Other/Unknown,Some-college,Married,Sales,White,Male,51,0.741
+21,Other/Unknown,Bachelors,Married,Other/Unknown,White,Male,59,0.657
+90,Other/Unknown,Some-college,Single,Other/Unknown,White,Male,79,0.708

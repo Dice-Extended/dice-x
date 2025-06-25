@@ -6,8 +6,9 @@ class BackEndTypes:
     Tensorflow1 = 'TF1'
     Tensorflow2 = 'TF2'
     Pytorch = 'PYT'
+    DPPytorch = 'DP_PYT'
 
-    ALL = [Sklearn, Tensorflow1, Tensorflow2, Pytorch]
+    ALL = [Sklearn, Tensorflow1, Tensorflow2, Pytorch, DPPytorch]
 
 
 class SamplingStrategy:

@@ -42,7 +42,7 @@ class StandardAutoEncoder(_BaseAutoEncoder):
             nn.Sigmoid()
         )
 
-    def forward(self, x: torch.Tensor) -> tuple:
+    def forward(self, x: torch.Tensor) -> tuple:     # type: ignore
         """
         Forward pass through the auto encoder.
 
@@ -84,7 +84,7 @@ class StandardAutoEncoder(_BaseAutoEncoder):
 
         for epoch in range(epochs):
             total_loss = 0
-            progress_bar = tqdm(dataloader, desc=f"Epoch {epoch + 1}/{epoch}", unit="batch")
+            progress_bar = tqdm(dataloader, desc=f"Epoch {epoch + 1}/{epoch}", unit="batch")     # type: ignore
             
             for batch in progress_bar:
                 x_batch = batch[0]
@@ -100,7 +100,7 @@ class StandardAutoEncoder(_BaseAutoEncoder):
 
                 progress_bar.set_postfix(batch_loss=f"{loss.item():.4f}")
             
-            average_loss = total_loss / len(dataloader)
+            average_loss = total_loss / len(dataloader)     # type: ignore
             self._history['loss'].append(average_loss)
 
             if save_model and epoch % save_interval == 0:
