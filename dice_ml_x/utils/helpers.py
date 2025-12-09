@@ -43,8 +43,6 @@ def preprocess_compas_dataset(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-
-
 def load_compas_dataset() -> pd.DataFrame:
     outdirname = "compas"
     arff_file_name = f"{outdirname}.arff"
@@ -59,6 +57,61 @@ def load_compas_dataset() -> pd.DataFrame:
     drop_cols = df.columns.difference(cols_to_get)
     df.drop(columns=drop_cols, inplace=True)
     return df
+
+
+'''def load_compas_dataset() -> pd.DataFrame:
+    """Download (if needed), decode and tidy the COMPAS two-year-recidivism data."""
+    outname = "compas.arff"
+
+    # 1 ─ Download once
+    if not os.path.isfile(outname):
+        urlretrieve(dataset_links["compas"], outname)
+
+    # 2 ─ Read the ARFF file
+    arff_data = arff.loadarff(outname)
+    df = pd.DataFrame(arff_data[0])
+
+    # 3 ─ Make *column names* plain strings (some are bytes)
+    decoded_cols = [
+        c.decode("utf-8") if isinstance(c, (bytes, bytearray)) else c
+        for c in df.columns
+    ]
+    df.columns = decoded_cols
+
+    #    Deduplicate any names that collide after decoding (foo, foo.1, foo.2 …)
+    if df.columns.has_duplicates:
+        df.columns = (
+            pd.io.parsers.ParserBase({"names": df.columns})
+            ._maybe_dedup_names(df.columns)
+        )
+
+    # 4 ─ Cell-level decoding, one column at a time
+    def safe_decode(val):
+        if isinstance(val, (bytes, bytearray)):
+            try:
+                return val.decode("utf-8")
+            except UnicodeDecodeError:
+                return pd.NA               # bad byte sequence → missing
+        if val is None or pd.isna(val):
+            return pd.NA
+        return val
+
+    for col in df.select_dtypes(include="object").columns:
+        df[col] = df[col].map(safe_decode)
+
+    # 5 ─ Cast numeric columns
+    numeric_cols = ["age", "priors_count", "twoyearrecid"]
+    df[numeric_cols] = (
+        df[numeric_cols]
+        .apply(lambda s: pd.to_numeric(s, errors="coerce"))
+        .astype("Int64")                 # keeps NA as <NA>
+    )
+
+    # 6 ─ Your existing custom clean-up
+    df = preprocess_compas_dataset(df)
+    keep = ["age", "sex", "race", "priors_count", "c_charge_degree", "twoyearrecid"]
+    return df[keep]'''
+
 
 def _preprocess_german_data(data: np.array) -> pd.DataFrame:
     data_split = [row.split() for row in data]

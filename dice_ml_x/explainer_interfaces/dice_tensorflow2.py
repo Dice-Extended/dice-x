@@ -1,20 +1,19 @@
 """
 Module to generate diverse counterfactual explanations based on tensorflow 2.x
 """
+from dice_ml_x.explainer_interfaces.explainer_base import ExplainerBase
+from dice_ml_x.counterfactual_explanations import CounterfactualExplanations
+from dice_ml_x import diverse_counterfactuals as exp
+import tensorflow.python.keras.backend as K
+import tensorflow as tf
+import pandas as pd
+import numpy as np
 import copy
 import random
 import timeit
 # To suppress TensorFlow warning about the optimizer running slowly on Apple chips.
 import absl.logging
 absl.logging.set_verbosity(absl.logging.ERROR)
-
-import numpy as np
-import pandas as pd
-import tensorflow as tf
-
-from dice_ml_x import diverse_counterfactuals as exp
-from dice_ml_x.counterfactual_explanations import CounterfactualExplanations
-from dice_ml_x.explainer_interfaces.explainer_base import ExplainerBase
 
 
 class DiceTensorFlow2(ExplainerBase):
@@ -27,9 +26,16 @@ class DiceTensorFlow2(ExplainerBase):
         """
         # initiating data related parameters
         super().__init__(data_interface)
+
+        # Set device - default to CPU, can be overridden by user
+        # Options: "cpu", "gpu", or specific device like "/GPU:0"
+        # Note: TensorFlow on Mac doesn't require explicit MPS device specification
+        self.device = "cpu"
+
         # initializing model related variables
         self.model = model_interface
-        self.model.load_model()  # loading trained model
+        with tf.device(self.device):
+            self.model.load_model()    # loading the trained model
         self.model.transformer.feed_data_params(data_interface)
         self.model.transformer.initialize_transform_func()
         # temp data to create some attributes like encoded feature names
@@ -69,7 +75,7 @@ class DiceTensorFlow2(ExplainerBase):
                                  project_iter=0, loss_diff_thres=1e-5, loss_converge_maxiter=1, verbose=False,
                                  init_near_query_instance=True, tie_random=False, stopping_threshold=0.5,
                                  posthoc_sparsity_param=0.1, posthoc_sparsity_algorithm="linear", limit_steps_ls=10000,
-                                 perturbation_method="gaussian", **kwargs):
+                                 perturbation_method="gaussian", preprocessing_bins: int=10, **kwargs):
         """Generates diverse counterfactual explanations
 
         :param query_instance: Test point of interest. A dictionary of feature names and values or a single row dataframe
@@ -148,7 +154,7 @@ class DiceTensorFlow2(ExplainerBase):
                                       loss_diff_thres, loss_converge_maxiter, verbose,
                                       init_near_query_instance, tie_random, stopping_threshold,
                                       posthoc_sparsity_param, posthoc_sparsity_algorithm, limit_steps_ls,
-                                      perturbation_method, **kwargs)
+                                      perturbation_method, preprocessing_bins=preprocessing_bins, **kwargs)
 
         counterfactual_explanations = exp.CounterfactualExamples(
             data_interface=self.data_interface,
@@ -164,7 +170,7 @@ class DiceTensorFlow2(ExplainerBase):
         """prediction function"""
         temp_preds = self.model.get_output(input_instance).numpy()
         return np.array([preds[(self.num_output_nodes-1):] for preds in temp_preds], dtype=np.float32)
-    
+
     def predict_fn_with_grads(self, input_instance):
         return self.model.model(input_instance, training=False)
 
@@ -172,6 +178,30 @@ class DiceTensorFlow2(ExplainerBase):
         """prediction function for sparsity correction"""
         input_instance = self.model.transformer.transform(input_instance).to_numpy()
         return self.predict_fn(tf.constant(input_instance, dtype=tf.float32))
+
+    def get_validity_percentage(self):
+        """
+        Percentage of generated counterfactuals that actually flip the
+        model prediction to the desired `self.target_cf_class`.
+
+        Returns
+        -------
+        float
+            Validity in percent (0â€’100).
+        """
+
+        cfs_np = np.array([cf.numpy() if tf.is_tensor(cf) else cf for cf in self.cfs])
+        unique_cfs_np = np.unique(cfs_np, axis=0)
+
+        preds = self.predict_fn(tf.convert_to_tensor(unique_cfs_np, dtype=tf.float32))
+
+        if self.target_cf_class == 0:
+            valid_mask = preds[:, 0] <= self.stopping_threshold
+        else:
+            valid_mask = preds[:, 0] >= self.stopping_threshold
+
+        validity_percentage = 100.0 * valid_mask.mean()
+        return float(validity_percentage)
 
     def do_cf_initializations(self, total_CFs, algorithm, features_to_vary):
         """Intializes CFs and other related variables."""
@@ -195,13 +225,10 @@ class DiceTensorFlow2(ExplainerBase):
         # CF initialization
         if len(self.cfs) != self.total_CFs:
             self.cfs = []
-            for _ in range(self.total_CFs):
-                one_init = [[]]
-                for jx in range(self.minx.shape[1]):
-                    min_val = self.minx[0][jx]
-                    max_val = self.maxx[0][jx]
-                    one_init[0].append(np.random.uniform(self.minx[0][jx], self.maxx[0][jx]))
-                self.cfs.append(tf.Variable(one_init, dtype=tf.float32))
+            with tf.device(self.device):
+                for _ in range(self.total_CFs):
+                    one_init = np.random.uniform(self.minx, self.maxx).astype(np.float32)
+                    self.cfs.append(tf.Variable(one_init, dtype=tf.float32))
 
     def do_loss_initializations(self, yloss_type, diversity_loss_type, feature_weights):
         """Intializes variables related to main loss function"""
@@ -248,18 +275,45 @@ class DiceTensorFlow2(ExplainerBase):
         elif opt_method == "rmsprop":
             self.optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
 
-
     def do_perturbation(self):
+        cfs_stacked = tf.squeeze(tf.stack(self.cfs, axis=0), axis=1)  # (K,D)
+
+        if self.encoded_continuous_feature_indexes:
+            continuous_slice = tf.gather(cfs_stacked, self.encoded_continuous_feature_indexes, axis=1)
+            noise = 0.3 * continuous_slice
+            noise_mask = tf.zeros_like(cfs_stacked)
+            idx = tf.constant([[i, j] for i in range(cfs_stacked.shape[0])
+                               for j in self.encoded_continuous_feature_indexes], dtype=tf.int32)
+            updates = tf.reshape(noise, [-1])
+            noise_mask = tf.tensor_scatter_nd_update(noise_mask, idx, updates)
+            cfs_stacked = cfs_stacked + noise_mask
+
+        if self.encoded_categorical_feature_indexes:
+            for cat_cols in self.encoded_categorical_feature_indexes:
+                cat_slice = tf.gather(cfs_stacked, cat_cols, axis=1)
+                sample_sz = tf.shape(cat_slice)[0]
+                depth = tf.shape(cat_slice)[1]
+                rand_idx = tf.random.uniform(shape=(sample_sz,), minval=0, maxval=depth, dtype=tf.int32)
+                cat_onehot = tf.one_hot(rand_idx, depth=depth, dtype=tf.float32)
+
+                cat_mask = tf.zeros_like(cfs_stacked)
+                idx = tf.constant([[i, j] for i in range(cfs_stacked.shape[0]) for j in cat_cols], dtype=tf.int32)
+                updates = tf.reshape(cat_onehot, [-1])
+                cat_mask = tf.tensor_scatter_nd_update(cat_mask, idx, updates)
+                cfs_stacked = cfs_stacked + cat_mask
+
+        return tf.identity(cfs_stacked)  # (K,D)
+
         cfs_stacked = tf.stack(self.cfs, axis=0)
         cfs_stacked = tf.squeeze(cfs_stacked, axis=1)
-        
+
         if self.encoded_continuous_feature_indexes:
             continuous_slice = tf.gather(cfs_stacked, self.encoded_continuous_feature_indexes, axis=1)
             noise = continuous_slice * 0.3
             noise_mask = tf.zeros_like(cfs_stacked)
 
-            indices = tf.constant([[i, j] for i in range(cfs_stacked.shape[0]) 
-                                for j in self.encoded_continuous_feature_indexes], dtype=tf.int32)
+            indices = tf.constant([[i, j] for i in range(cfs_stacked.shape[0])
+                                   for j in self.encoded_continuous_feature_indexes], dtype=tf.int32)
             updates = tf.reshape(noise, [-1])
             noise_mask = tf.tensor_scatter_nd_update(noise_mask, indices, updates)
             cfs_stacked = cfs_stacked + noise_mask
@@ -282,9 +336,9 @@ class DiceTensorFlow2(ExplainerBase):
         cfs_perturbed = tf.Variable(tf.identity(cfs_perturbed), trainable=True)
         return cfs_perturbed
 
-    @tf.function
+    @tf.function(jit_compile=True)
     def optimize_perturbations(self, c_i_prime: tf.Tensor, c_i: tf.Tensor, gamma):
-       #print(f"c_i_prime_numerical shape: {c_i_prime_numerical.shape}")
+       # print(f"c_i_prime_numerical shape: {c_i_prime_numerical.shape}")
         with tf.GradientTape() as tape:
             c_i = tf.reshape(c_i, [-1, c_i.shape[-1]])
             c_i_prime = tf.reshape(c_i_prime, [-1, c_i_prime.shape[-1]])
@@ -295,28 +349,54 @@ class DiceTensorFlow2(ExplainerBase):
             distance = tf.norm(c_i_prime - c_i, ord=2)
             loss = class_loss - gamma * distance
         grads = tape.gradient(loss, [c_i_prime])
-        
+
         return loss, grads
-    
-    def generate_perturbations_vectorized(self, max_iter=100, tol=1e-3, gamma=1e-2, **kwargs):
+
+    """ @tf.function(jit_compile=True)
+    def generate_perturbations_vectorized(self, max_iter=100, tol=tf.constant(1e-3), gamma=1e-2, **kwargs):
         
         c_i_prime = self.do_perturbation()
         c_i = tf.stack(self.cfs, axis=0)
         optimizer = tf.keras.optimizers.AdamW(learning_rate=1e-2)
-        prev_loss = np.inf
-        for it in range(max_iter):
+        prev_loss = tf.constant(float('inf'))
+        for _ in range(max_iter):
             loss, grads = self.optimize_perturbations(c_i_prime, c_i, gamma)
             optimizer.apply_gradients(zip(grads, [c_i_prime]))
             
-            if abs(loss.numpy() - prev_loss) < tol: 
-                
+            if tf.abs(loss - prev_loss) < tol:
                 break
-            prev_loss = loss.numpy()
-        return tf.stop_gradient(c_i_prime)
-    
-    def _preprocess_for_robustness(self, cfs: tf.Tensor, perturbed_cfs: tf.Tensor) -> tuple:
+            prev_loss = loss
+        return tf.stop_gradient(c_i_prime) """
 
-        def preprocess_continuous_features(cfs: tf.Tensor, num_bins=10) -> tf.Tensor:
+    @tf.function(jit_compile=True)
+    def generate_perturbations_vectorized(self, max_iter=100, tol=1e-3, gamma=1e-2, **kwargs):
+        c_i_prime = self.do_perturbation()          # Tensor (K, D)
+        c_i = tf.stack(self.cfs, axis=0)      # (K,1,D) or (K,D)
+        tol = tf.convert_to_tensor(tol, dtype=tf.float32)
+        lr = tf.constant(1e-2, dtype=tf.float32)
+        inf = tf.constant(float('inf'), dtype=tf.float32)
+        maxit = tf.convert_to_tensor(max_iter, dtype=tf.int32)
+
+        i0, prev0, diff0 = tf.constant(0, tf.int32), inf, inf
+        c0 = tf.convert_to_tensor(c_i_prime, dtype=tf.float32)
+
+        def cond(i, prev_loss, diff, c_var):
+            return tf.logical_and(i < maxit, diff > tol)
+
+        def body(i, prev_loss, diff, c_var):
+            loss, grads = self.optimize_perturbations(c_var, c_i, gamma)
+            g = tf.convert_to_tensor(grads[0], dtype=c_var.dtype)
+            new_c = c_var - lr * g
+            loss_s = tf.squeeze(loss)
+            new_df = tf.abs(loss_s - prev_loss)
+            return (i + 1, loss_s, new_df, new_c)
+
+        _, _, _, c_final = tf.while_loop(cond, body, (i0, prev0, diff0, c0))
+        return tf.stop_gradient(c_final)
+
+    def _preprocess_for_robustness(self, cfs: tf.Tensor, perturbed_cfs: tf.Tensor, num_bins: int=10) -> tuple:
+
+        def preprocess_continuous_features(cfs: tf.Tensor, num_bins=num_bins) -> tf.Tensor:
             edges = tf.linspace(0.0, 1.0, num=num_bins + 1)
             all_one_hots = []
 
@@ -328,7 +408,7 @@ class DiceTensorFlow2(ExplainerBase):
                 one_hot_col = tf.one_hot(binned_indices, depth=num_bins, dtype=tf.float64)
                 all_one_hots.append(one_hot_col)
             return tf.concat(all_one_hots, axis=1)
-        
+
         cat_cols = [col for group in self.encoded_categorical_feature_indexes for col in group]
         cat_cols = tf.constant(cat_cols, dtype=tf.int32)
         cfs = tf.squeeze(cfs, axis=1)
@@ -347,7 +427,44 @@ class DiceTensorFlow2(ExplainerBase):
 
         return cfs_processed, perturbed_cfs_processed
 
-    def compute_robustness_loss(self, perturbed_cfs: tf.Tensor) -> float:
+    def _phi_soft(self, X: tf.Tensor, num_bins: int = 10, sigma: float = 0.1, eps: float = 1e-8) -> tf.Tensor:
+        parts = []
+
+        if getattr(self, "encoded_continuous_feature_indexes", None):
+            idx = tf.constant(self.encoded_continuous_feature_indexes, dtype=tf.int32)
+            cont = tf.gather(X, idx, axis=1)
+            cont = tf.clip_by_value(cont, 0.0, 1.0)
+
+            centers = tf.linspace(0.0, 1.0, num_bins)
+            cont_exp = cont[..., tf.newaxis]   # type: ignore
+            centers = tf.reshape(centers, (1, 1, num_bins))
+            rbf = tf.exp(- (cont_exp - centers) ** 2 / (2.0 * (sigma ** 2)))
+            rbf = rbf / (tf.reduce_sum(rbf, axis=-1, keepdims=True) + eps)
+            parts.append(tf.reshape(rbf, (tf.shape(cont)[0], -1)))
+
+        if getattr(self, "encoded_categorical_feature_indexes", None):
+            for grp in self.encoded_categorical_feature_indexes:
+                g = tf.gather(X, grp, axis=1)
+                parts.append(tf.nn.softmax(g, axis=1))
+
+        return tf.concat(parts, axis=1) if parts else X
+
+    def compute_robustness_loss_SDS(self, perturbed_cfs: tf.Tensor, num_bins: int = 10,
+                                    sigma: float = 0.1, eps: float = 1e-8) -> tf.Tensor:
+        cfs = tf.stack(self.cfs, axis=0)
+
+        if tf.rank(cfs) == 3 and cfs.shape[1] == 1:
+            cfs = tf.squeeze(cfs, axis=1)
+
+        p = self._phi_soft(cfs, num_bins=num_bins, sigma=sigma)
+        q = self._phi_soft(perturbed_cfs, num_bins=num_bins, sigma=sigma)
+
+        num = 2.0 * tf.reduce_sum(p * q, axis=1)
+        den = tf.reduce_sum(p * p, axis=1) + tf.reduce_sum(q * q, axis=1) + eps
+        sdc = num / den
+        return tf.reduce_mean(sdc)
+
+    def compute_robustness_loss(self, perturbed_cfs: tf.Tensor, preprocessing_bins: int=10) -> float:
         """
         Computes the robustness loss.
         Args:
@@ -356,62 +473,59 @@ class DiceTensorFlow2(ExplainerBase):
         Returns:
             float: Robustness loss in scalar.
         """
-        
-        cfs = tf.stack(self.cfs, axis=0)
+        cfs = tf.stack(self.cfs, axis=0)  # (K,1,D) or (K,D)
 
-        cfs_processed, perturbed_cfs_processed = self._preprocess_for_robustness(cfs, perturbed_cfs)
+        cfs_processed, perturbed_cfs_processed = self._preprocess_for_robustness(cfs, perturbed_cfs,
+                                                                                 num_bins=preprocessing_bins)
+        # Sorensenâ€“Dice on processed representations (all TF ops)
         intersection = tf.reduce_sum(tf.minimum(cfs_processed, perturbed_cfs_processed), axis=1)
-        intersection = np.sum(np.minimum(cfs_processed, perturbed_cfs_processed), axis=1)
         union = tf.reduce_sum(cfs_processed, axis=1) + tf.reduce_sum(perturbed_cfs_processed, axis=1)
-
-        epsilon = 1e-8
-        sorensen_dice_coefficient = (2 * intersection) / (union + epsilon)
-        sorensen_dice_coefficient = tf.where(
-            tf.math.is_nan(sorensen_dice_coefficient), 
-            tf.ones_like(sorensen_dice_coefficient), 
-            sorensen_dice_coefficient
-        )
-        return tf.cast(tf.reduce_mean(sorensen_dice_coefficient), dtype=tf.float32)
-    
+        eps = tf.constant(1e-8, dtype=intersection.dtype)
+        sdc = (2.0 * intersection) / (union + eps)
+        sdc = tf.where(tf.math.is_nan(sdc), tf.ones_like(sdc), sdc)
+        return tf.reduce_mean(sdc)
 
     def compute_yloss(self):
         """Computes the first part (y-loss) of the loss function."""
-        yloss = 0.0
-        for i in range(self.total_CFs):
-            if self.yloss_type == "l2_loss":
-                temp_loss = tf.pow((self.model.get_output(self.cfs[i]) - self.target_cf_class), 2)
-                temp_loss = temp_loss[:, (self.num_output_nodes-1):][0][0]
-            elif self.yloss_type == "log_loss":
-                temp_logits = tf.math.log((tf.abs(
-                    self.model.get_output(
-                        self.cfs[i]) - 0.000001))/(1 - tf.abs(self.model.get_output(self.cfs[i]) - 0.000001)))
-                temp_logits = temp_logits[:, (self.num_output_nodes-1):]
-                temp_loss = tf.nn.sigmoid_cross_entropy_with_logits(
-                    logits=temp_logits, labels=self.target_cf_class)[0][0]
-            elif self.yloss_type == "hinge_loss":
-                temp_logits = tf.math.log((tf.abs(
-                    self.model.get_output(
-                        self.cfs[i]) - 0.000001))/(1 - tf.abs(self.model.get_output(self.cfs[i]) - 0.000001)))
-                temp_logits = temp_logits[:, (self.num_output_nodes-1):]
-                temp_loss = tf.compat.v1.losses.hinge_loss(
-                    logits=temp_logits, labels=self.target_cf_class)
+        cfs_stacked = tf.concat(self.cfs, axis=0)
+        predictions = self.model.get_output(cfs_stacked)[:, (self.num_output_nodes - 1):]
 
-            yloss += temp_loss
+        if self.yloss_type == "l2_loss":
+            yloss = tf.reduce_mean(tf.pow(predictions - self.target_cf_class, 2))
+        elif self.yloss_type == "log_loss":
+            temp_logits = tf.math.log((tf.abs(predictions - 0.000001)) / (1 - tf.abs(predictions - 0.000001)))
+            yloss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+                logits=temp_logits, labels=tf.cast(self.target_cf_class, dtype=tf.float32)))
+        elif self.yloss_type == "hinge_loss":
+            temp_logits = tf.math.log((tf.abs(predictions - 0.000001)) / (1 - tf.abs(predictions - 0.000001)))
+            labels = tf.cast(tf.broadcast_to(self.target_cf_class, tf.shape(predictions)),
+                             dtype=tf.float32)
+            yloss = tf.reduce_mean(tf.compat.v1.losses.hinge_loss(logits=temp_logits, labels=labels))
+        else:
+            yloss = 0.0
 
-        return yloss/self.total_CFs
+        return yloss
 
     def compute_dist(self, x_hat, x1):
         """Compute weighted distance between two vectors."""
         return tf.reduce_sum(tf.multiply((tf.abs(x_hat - x1)), self.feature_weights_list))
 
-    def compute_proximity_loss(self):
+    '''def compute_proximity_loss(self):
         """Compute the second part (distance from x1) of the loss function."""
         proximity_loss = 0.0
         for i in range(self.total_CFs):
             proximity_loss += self.compute_dist(self.cfs[i], self.x1)
-        return proximity_loss/tf.cast((tf.multiply(len(self.minx[0]), self.total_CFs)), dtype=tf.float32)
+        return proximity_loss/tf.cast((tf.multiply(len(self.minx[0]), self.total_CFs)), dtype=tf.float32)'''
 
-    def dpp_style(self, submethod):
+    def compute_proximity_loss(self):
+        """Compute the second part (distance from x1) of the loss function."""
+        cfs_stacked = tf.concat(self.cfs, axis=0)
+        # Broadcasting self.x1 to match the shape of cfs_stacked
+        distances = tf.multiply(tf.abs(cfs_stacked - self.x1), self.feature_weights_list)
+        proximity_loss = tf.reduce_mean(distances)
+        return proximity_loss / tf.cast(len(self.minx[0]), dtype=tf.float32)
+
+    '''def dpp_style(self, submethod):
         """Computes the DPP of a matrix."""
         det_entries = []
         if submethod == "inverse_dist":
@@ -431,6 +545,29 @@ class DiceTensorFlow2(ExplainerBase):
                     det_entries.append(det_temp_entry)
 
         det_entries = tf.reshape(det_entries, [self.total_CFs, self.total_CFs])
+        diversity_loss = tf.linalg.det(det_entries)
+        return diversity_loss'''
+
+    def dpp_style(self, submethod):
+        """Computes the DPP of a matrix."""
+        cfs_stacked = tf.squeeze(tf.stack(self.cfs, axis=0), axis=1)  # Shape: (total_CFs, num_features)
+
+        # Expand dimensions for broadcasting
+        cfs1 = tf.expand_dims(cfs_stacked, 1)  # Shape: (total_CFs, 1, num_features)
+        cfs2 = tf.expand_dims(cfs_stacked, 0)  # Shape: (1, total_CFs, num_features)
+
+        # Compute pairwise distances
+        pairwise_dist = tf.reduce_sum(self.feature_weights_list * tf.abs(cfs1 - cfs2), axis=2)
+
+        if submethod == "inverse_dist":
+            det_entries = 1.0 / (1.0 + pairwise_dist)
+            # Add a small value to the diagonal for numerical stability
+            det_entries += tf.eye(self.total_CFs, dtype=tf.float32) * 0.0001
+        elif submethod == "exponential_dist":
+            det_entries = 1.0 / tf.exp(pairwise_dist)
+        else:
+            return tf.constant(0.0)
+
         diversity_loss = tf.linalg.det(det_entries)
         return diversity_loss
 
@@ -453,7 +590,7 @@ class DiceTensorFlow2(ExplainerBase):
 
             return 1.0 - (diversity_loss/count)
 
-    def compute_regularization_loss(self):
+    '''def compute_regularization_loss(self):
         """Adds a linear equality constraints to the loss functions - to ensure all levels
            of a categorical variable sums to one"""
         regularization_loss = 0.0
@@ -461,16 +598,33 @@ class DiceTensorFlow2(ExplainerBase):
             for v in self.encoded_categorical_feature_indexes:
                 regularization_loss += tf.pow((tf.reduce_sum(self.cfs[i][0, v[0]:v[-1]+1]) - 1.0), 2)
 
+        return regularization_loss'''
+
+    def compute_regularization_loss(self):
+        """Adds a linear equality constraints to the loss functions - to ensure all levels
+        of a categorical variable sums to one"""
+        # tf.concat on a list of (1, num_features) tensors creates a (total_CFs, num_features) tensor.
+        cfs_stacked = tf.concat(self.cfs, axis=0)
+
+        # The squeeze operation was incorrect and is removed. We use cfs_stacked directly.
+        regularization_loss = 0.0
+        for v in self.encoded_categorical_feature_indexes:
+            # Sum over the categorical feature columns for all CFs at once
+            # cfs_stacked is 2D, so slicing and summing works as intended.
+            sum_over_cat_features = tf.reduce_sum(cfs_stacked[:, v[0]:v[-1]+1], axis=1)
+            regularization_loss += tf.reduce_sum(tf.pow(sum_over_cat_features - 1.0, 2))
+
         return regularization_loss
 
-    def compute_loss(self, **kwargs):
+    def compute_loss(self, preprocessing_bins: int=10, **kwargs):
         """Computes the overall loss"""
         perturbed_cfs = self.generate_perturbations_vectorized(**kwargs)
 
         self.yloss = self.compute_yloss()
         self.proximity_loss = self.compute_proximity_loss() if self.proximity_weight > 0 else 0.0
         self.diversity_loss = self.compute_diversity_loss() if self.diversity_weight > 0 else 0.0
-        self.robustness_loss = self.compute_robustness_loss(perturbed_cfs=perturbed_cfs) if self.robustness_weight > 0 else 0.0
+        self.robustness_loss = self.compute_robustness_loss(perturbed_cfs=perturbed_cfs, preprocessing_bins=preprocessing_bins) \
+                                                            if self.robustness_weight > 0 else 0.0
         self.regularization_loss = self.compute_regularization_loss()
         self.loss = self.yloss + (self.proximity_weight * self.proximity_loss) - \
             (self.diversity_weight * self.diversity_loss) - \
@@ -493,7 +647,7 @@ class DiceTensorFlow2(ExplainerBase):
             one_init = np.array([one_init], dtype=np.float32)
             self.cfs[n].assign(one_init)
 
-    def round_off_cfs(self, assign=False):
+    '''def round_off_cfs(self, assign=False):
         """function for intermediate projection of CFs."""
         temp_cfs = []
         for index, tcf in enumerate(self.cfs):
@@ -529,6 +683,81 @@ class DiceTensorFlow2(ExplainerBase):
             return None
         else:
             return temp_cfs
+    
+    def round_off_cfs(self, assign=False):
+        """function for intermediate projection of CFs."""
+
+        cfs_stacked = tf.squeeze(tf.stack(self.cfs, axis=0), axis=1)  # (K,D)
+
+        # continuous features: bin + re-normalize (vectorized)
+        for i, v in enumerate(self.encoded_continuous_feature_indexes):
+            org = cfs_stacked[:, v] * (self.cont_maxx[i] - self.cont_minx[i]) + self.cont_minx[i]
+            org = tf.round(org * (10 ** self.cont_precisions[i])) / (10 ** self.cont_precisions[i])
+            norm = (org - self.cont_minx[i]) / (self.cont_maxx[i] - self.cont_minx[i])
+            # scatter back
+            cfs_stacked = tf.tensor_scatter_nd_update(
+                cfs_stacked,
+                tf.concat([tf.reshape(tf.range(tf.shape(cfs_stacked)[0]), (-1,1)) * 0 + 0,
+                        tf.reshape(tf.constant(v, dtype=tf.int32), (1,-1)).tile([tf.shape(cfs_stacked)[0],1])], axis=1),
+                norm  # this trick is ugly; if it scares you, keep your original NumPy version
+            )
+
+        # categorical features: argmax one-hot (vectorized)
+        for v in self.encoded_categorical_feature_indexes:
+            cat = cfs_stacked[:, v[0]:v[-1]+1]
+            arg = tf.argmax(cat, axis=1, output_type=tf.int32)
+            one = tf.one_hot(arg, depth=cat.shape[1], dtype=cat.dtype)
+            # overwrite slice
+            left  = cfs_stacked[:, :v[0]]
+            right = cfs_stacked[:, v[-1]+1:]
+            cfs_stacked = tf.concat([left, one, right], axis=1)
+
+        if assign:
+            # split back into list of Variables without leaving TF
+            for i in range(len(self.cfs)):
+                self.cfs[i].assign(tf.expand_dims(cfs_stacked[i], axis=0))
+            return None
+        else:
+            return [tf.expand_dims(cfs_stacked[i], axis=0) for i in range(len(self.cfs))]'''
+
+    def round_off_cfs(self, assign=False):
+        cfs_stacked = tf.squeeze(tf.stack(self.cfs, axis=0), axis=1)  # (K, D)
+
+        # ----- continuous features: round & normalize, then splice back
+        for i, vidx in enumerate(self.encoded_continuous_feature_indexes):
+            # Allow either int or list of indices
+            idxs = vidx if isinstance(vidx, (list, tuple)) else [vidx]
+
+            cols = tf.gather(cfs_stacked, idxs, axis=1)  # (K, len(idxs))
+            # de-normalize, round to precision, re-normalize
+            span = tf.cast(self.cont_maxx[i] - self.cont_minx[i], tf.float32)
+            base = tf.cast(self.cont_minx[i], tf.float32)
+            cols_org = cols * span + base
+
+            prec_pow = tf.cast(10 ** self.cont_precisions[i], tf.float32)
+            cols_org = tf.round(cols_org * prec_pow) / prec_pow
+
+            cols_norm = (cols_org - base) / span  # (K, len(idxs))
+
+            left = cfs_stacked[:, :idxs[0]]
+            right = cfs_stacked[:, idxs[-1] + 1:]
+            cfs_stacked = tf.concat([left, cols_norm, right], axis=1)
+
+        # ----- categorical features: argmax one-hot & splice back
+        for idxs in self.encoded_categorical_feature_indexes:
+            cat = cfs_stacked[:, idxs[0]:idxs[-1] + 1]
+            arg = tf.argmax(cat, axis=1, output_type=tf.int32)
+            one = tf.one_hot(arg, depth=cat.shape[1], dtype=cat.dtype)
+            left = cfs_stacked[:, :idxs[0]]
+            right = cfs_stacked[:, idxs[-1] + 1:]
+            cfs_stacked = tf.concat([left, one, right], axis=1)
+
+        if assign:
+            for i in range(len(self.cfs)):
+                self.cfs[i].assign(tf.expand_dims(cfs_stacked[i], axis=0))
+            return None
+        else:
+            return [tf.expand_dims(cfs_stacked[i], axis=0) for i in range(len(self.cfs))]
 
     def stop_loop(self, itr, loss_diff):
         """Determines the stopping condition for gradient descent."""
@@ -545,7 +774,7 @@ class DiceTensorFlow2(ExplainerBase):
         # stop GD if max iter is reached
         if itr >= self.max_iter:
             return True
-        
+
         # else stop when loss diff is small & all CFs are valid (less or greater than a stopping threshold)
         if loss_diff <= self.loss_diff_thres:
             self.loss_converge_iter += 1
@@ -566,7 +795,6 @@ class DiceTensorFlow2(ExplainerBase):
         else:
             self.loss_converge_iter = 0
             return False
-        
 
     def _reset_loss_history(self):
         self.loss_history = {key: [] for key in self.loss_history}
@@ -582,125 +810,152 @@ class DiceTensorFlow2(ExplainerBase):
     def find_counterfactuals(self, query_instance, desired_class, optimizer, learning_rate, min_iter,
                              max_iter, project_iter, loss_diff_thres, loss_converge_maxiter, verbose,
                              init_near_query_instance, tie_random, stopping_threshold, posthoc_sparsity_param,
-                             posthoc_sparsity_algorithm, limit_steps_ls, perturbation_method: str, **kwargs):
+                             posthoc_sparsity_algorithm, limit_steps_ls, perturbation_method: str,
+                             preprocessing_bins: int=10, **kwargs):
         """Finds counterfactuals by gradient-descent."""
         self._reset_loss_history()
-        query_instance = self.model.transformer.transform(query_instance).to_numpy()
-        self.x1 = tf.constant(query_instance, dtype=tf.float32)
 
-        # find the predicted value of query_instance
-        test_pred = self.predict_fn(tf.constant(query_instance, dtype=tf.float32))[0][0]
-        if desired_class == "opposite":
-            desired_class = 1.0 - round(test_pred)
-        self.target_cf_class = np.array([[desired_class]], dtype=np.float32)
+        with tf.device(self.device):
+            query_instance = self.model.transformer.transform(query_instance).to_numpy()
+            self.x1 = tf.constant(query_instance, dtype=tf.float32)
 
-        self.min_iter = min_iter
-        self.max_iter = max_iter
-        self.project_iter = project_iter
-        self.loss_diff_thres = loss_diff_thres
-        # no. of iterations to wait to confirm that loss has converged
-        self.loss_converge_maxiter = loss_converge_maxiter
-        self.loss_converge_iter = 0
-        self.converged = False
+            # find the predicted value of query_instance
+            test_pred = self.predict_fn(tf.constant(query_instance, dtype=tf.float32))[0][0]
+            if desired_class == "opposite":
+                desired_class = 1.0 - round(test_pred)
+            self.target_cf_class = np.array([[desired_class]], dtype=np.float32)
 
-        self.stopping_threshold = stopping_threshold
-        if self.target_cf_class == 0 and self.stopping_threshold > 0.5:
-            self.stopping_threshold = 0.25
-        elif self.target_cf_class == 1 and self.stopping_threshold < 0.5:
-            self.stopping_threshold = 0.75
+            self.min_iter = min_iter
+            self.max_iter = max_iter
+            self.project_iter = project_iter
+            self.loss_diff_thres = loss_diff_thres
+            # no. of iterations to wait to confirm that loss has converged
+            self.loss_converge_maxiter = loss_converge_maxiter
+            self.loss_converge_iter = 0
+            self.converged = False
 
-        # to resolve tie - if multiple levels of an one-hot-encoded categorical variable take value 1
-        self.tie_random = tie_random
+            self.stopping_threshold = stopping_threshold
+            if self.target_cf_class == 0 and self.stopping_threshold > 0.5:
+                self.stopping_threshold = 0.25
+            elif self.target_cf_class == 1 and self.stopping_threshold < 0.5:
+                self.stopping_threshold = 0.75
 
-        # running optimization steps
-        start_time = timeit.default_timer()
-        self.final_cfs = []
+            # to resolve tie - if multiple levels of an one-hot-encoded categorical variable take value 1
+            self.tie_random = tie_random
 
-        # looping the find CFs depending on whether its random initialization or not
-        loop_find_CFs = self.total_random_inits if self.total_random_inits > 0 else 1
+            # running optimization steps
+            start_time = timeit.default_timer()
+            self.final_cfs = []
 
-        # variables to backup best known CFs so far in the optimization process -
-        # if the CFs dont converge in max_iter iterations, then best_backup_cfs is returned.
-        self.best_backup_cfs = [0]*max(self.total_CFs, loop_find_CFs)
-        self.best_backup_cfs_preds = [0]*max(self.total_CFs, loop_find_CFs)
-        self.min_dist_from_threshold = [100]*loop_find_CFs  # for backup CFs
+            # looping the find CFs depending on whether its random initialization or not
+            loop_find_CFs = self.total_random_inits if self.total_random_inits > 0 else 1
 
-        for loop_ix in range(loop_find_CFs):
-            # CF init
-            if self.total_random_inits > 0:
-                self.initialize_CFs(query_instance, False)
-            else:
-                self.initialize_CFs(query_instance, init_near_query_instance)
+            # variables to backup best known CFs so far in the optimization process -
+            # if the CFs dont converge in max_iter iterations, then best_backup_cfs is returned.
+            self.best_backup_cfs = [0]*max(self.total_CFs, loop_find_CFs)
+            self.best_backup_cfs_preds = [0]*max(self.total_CFs, loop_find_CFs)
+            self.min_dist_from_threshold = [100]*loop_find_CFs  # for backup CFs
 
-            # initialize optimizer
-            self.do_optimizer_initializations(optimizer, learning_rate)
+            for loop_ix in range(loop_find_CFs):
+                # CF init
+                if self.total_random_inits > 0:
+                    self.initialize_CFs(query_instance, False)
+                else:
+                    self.initialize_CFs(query_instance, init_near_query_instance)
 
-            iterations = 0
-            loss_diff = 1.0
-            prev_loss = 0.0
-            while self.stop_loop(iterations, loss_diff) is False:
+                # initialize optimizer
+                self.do_optimizer_initializations(optimizer, learning_rate)
 
-                # compute loss and tape the variables history
-                with tf.GradientTape() as tape:
-                    loss_value = self.compute_loss(**kwargs)
-                
-                # get gradients
-                grads = tape.gradient(loss_value, self.cfs)
+                iterations = 0
+                loss_diff = 1.0
+                prev_loss = 0
+                while self.stop_loop(iterations, loss_diff) is False:
 
-                # freeze features other than feat_to_vary_idxs
-                for ix in range(self.total_CFs):
-                    grads[ix] *= self.freezer
+                    # compute loss and tape the variables history
+                    with tf.GradientTape() as tape:
+                        loss_value = self.compute_loss(preprocessing_bins=preprocessing_bins, **kwargs)
 
-                # apply gradients and update the variables
-                self.optimizer.apply_gradients(zip(grads, self.cfs))
+                    # get gradients
+                    grads = tape.gradient(loss_value, self.cfs)
 
-                self._populate_loss_history(iterations, self.yloss, self.proximity_loss,
-                                            self.diversity_loss, self.robustness_loss, loss_value)
+                    # freeze features other than feat_to_vary_idxs
+                    for ix in range(self.total_CFs):
+                        grads[ix] *= self.freezer
 
-                # projection step
+                    # apply gradients and update the variables
+                    self.optimizer.apply_gradients(zip(grads, self.cfs))
+
+                    self._populate_loss_history(iterations, self.yloss, self.proximity_loss,
+                                                self.diversity_loss, self.robustness_loss, loss_value)
+
+                    cfs_stack = tf.stack([cf for cf in self.cfs], axis=0)   # (K,1,D)
+                    cfs_clip = tf.clip_by_value(cfs_stack, self.minx, self.maxx)
+                    for j in range(self.total_CFs):
+                        self.cfs[j].assign(cfs_clip[j])
+
+                    '''# projection step
+                    for j in range(0, self.total_CFs):
+                        temp_cf = self.cfs[j].numpy()
+                        clip_cf = np.clip(temp_cf, self.minx, self.maxx)  # clipping
+                        # to remove -ve sign before 0.0 in some cases
+                        clip_cf = np.add(clip_cf, np.array(
+                            [np.zeros([self.minx.shape[1]])]))
+                        self.cfs[j].assign(clip_cf)'''
+
+                    if verbose:
+                        if (iterations) % 50 == 0:
+                            print('step %d,  loss=%g' % (iterations+1, loss_value))
+
+                    loss_diff = abs(loss_value-prev_loss)
+                    prev_loss = loss_value
+                    iterations += 1
+
+                    '''# backing up CFs if they are valid
+                    temp_cfs_stored = self.round_off_cfs(assign=False)
+                    test_preds_stored = [self.predict_fn(tf.constant(cf, dtype=tf.float32)) for cf in temp_cfs_stored]
+
+                    if ((self.target_cf_class == 0 and all(i <= self.stopping_threshold for i in test_preds_stored)) or
+                    (self.target_cf_class == 1 and all(i >= self.stopping_threshold for i in test_preds_stored))):
+                        avg_preds_dist = np.mean([abs(pred[0][0]-self.stopping_threshold) for pred in test_preds_stored])
+                        if avg_preds_dist < self.min_dist_from_threshold[loop_ix]:
+                            self.min_dist_from_threshold[loop_ix] = avg_preds_dist
+                            for ix in range(self.total_CFs):
+                                self.best_backup_cfs[loop_ix+ix] = copy.deepcopy(temp_cfs_stored[ix])
+                                self.best_backup_cfs_preds[loop_ix+ix] = copy.deepcopy(test_preds_stored[ix])'''
+
+                    temp_cfs_stored = self.round_off_cfs(assign=False)                 # list of (1,D) tensors
+                    temp_batch = tf.concat(temp_cfs_stored, axis=0)               # (K,D)
+                    preds_batch = self.predict_fn(temp_batch)                      # (K,1)
+                    preds_vec = tf.squeeze(preds_batch, axis=1)                  # (K,)
+
+                    if self.target_cf_class == 0:
+                        all_valid = tf.reduce_all(preds_vec <= self.stopping_threshold)
+                        avg_dist = tf.reduce_mean(tf.abs(preds_vec - self.stopping_threshold))
+                    else:
+                        all_valid = tf.reduce_all(preds_vec >= self.stopping_threshold)
+                        avg_dist = tf.reduce_mean(tf.abs(preds_vec - self.stopping_threshold))
+
+                    if bool(all_valid):
+                        if float(avg_dist) < self.min_dist_from_threshold[loop_ix]:
+                            self.min_dist_from_threshold[loop_ix] = float(avg_dist)
+                            for ix in range(self.total_CFs):
+                                self.best_backup_cfs[loop_ix+ix] = temp_cfs_stored[ix].numpy()
+                                self.best_backup_cfs_preds[loop_ix+ix] = np.array([[float(preds_vec[ix])]])
+
+                # rounding off final cfs - not necessary when inter_project=True
+                self.round_off_cfs(assign=True)
+
+                # storing final CFs
                 for j in range(0, self.total_CFs):
-                    temp_cf = self.cfs[j].numpy()
-                    clip_cf = np.clip(temp_cf, self.minx, self.maxx)  # clipping
-                    # to remove -ve sign before 0.0 in some cases
-                    clip_cf = np.add(clip_cf, np.array(
-                        [np.zeros([self.minx.shape[1]])]))
-                    self.cfs[j].assign(clip_cf)
+                    temp = self.cfs[j].numpy()
+                    self.final_cfs.append(temp)
 
-                if verbose:
-                    if (iterations) % 50 == 0:
-                        print('step %d,  loss=%g' % (iterations+1, loss_value))
-
-                loss_diff = abs(loss_value-prev_loss)
-                prev_loss = loss_value
-                iterations += 1
-
-                # backing up CFs if they are valid
-                temp_cfs_stored = self.round_off_cfs(assign=False)
-                test_preds_stored = [self.predict_fn(tf.constant(cf, dtype=tf.float32)) for cf in temp_cfs_stored]
-
-                if ((self.target_cf_class == 0 and all(i <= self.stopping_threshold for i in test_preds_stored)) or
-                   (self.target_cf_class == 1 and all(i >= self.stopping_threshold for i in test_preds_stored))):
-                    avg_preds_dist = np.mean([abs(pred[0][0]-self.stopping_threshold) for pred in test_preds_stored])
-                    if avg_preds_dist < self.min_dist_from_threshold[loop_ix]:
-                        self.min_dist_from_threshold[loop_ix] = avg_preds_dist
-                        for ix in range(self.total_CFs):
-                            self.best_backup_cfs[loop_ix+ix] = copy.deepcopy(temp_cfs_stored[ix])
-                            self.best_backup_cfs_preds[loop_ix+ix] = copy.deepcopy(test_preds_stored[ix])
-
-            # rounding off final cfs - not necessary when inter_project=True
-            self.round_off_cfs(assign=True)
-
-            # storing final CFs
-            for j in range(0, self.total_CFs):
-                temp = self.cfs[j].numpy()
-                self.final_cfs.append(temp)
-
-            # max iterations at which GD stopped
-            self.max_iterations_run = iterations
+                # max iterations at which GD stopped
+                self.max_iterations_run = iterations
 
         self.elapsed = timeit.default_timer() - start_time
         self.cfs_preds = [self.predict_fn(tf.constant(cfs, dtype=tf.float32)) for cfs in self.final_cfs]
-    
+
         # update final_cfs from backed up CFs if valid CFs are not found
         if ((self.target_cf_class == 0 and any(i[0] > self.stopping_threshold for i in self.cfs_preds)) or
            (self.target_cf_class == 1 and any(i[0] < self.stopping_threshold for i in self.cfs_preds))):
@@ -710,20 +965,18 @@ class DiceTensorFlow2(ExplainerBase):
                         self.final_cfs[loop_ix+ix] = copy.deepcopy(self.best_backup_cfs[loop_ix+ix])
                         self.cfs_preds[loop_ix+ix] = copy.deepcopy(self.best_backup_cfs_preds[loop_ix+ix])
 
-        
-        
         # do inverse transform of CFs to original user-fed format
         cfs = np.array([self.final_cfs[i][0] for i in range(len(self.final_cfs))])
-        
+
         final_cfs_df = self.model.transformer.inverse_transform(
-               self.data_interface.get_decoded_data(cfs))
+            self.data_interface.get_decoded_data(cfs))
 
         cfs_preds = [np.round(preds.flatten().tolist(), 3) for preds in self.cfs_preds]
         cfs_preds = [item for sublist in cfs_preds for item in sublist]
         final_cfs_df[self.data_interface.outcome_name] = np.array(cfs_preds)
 
         test_instance_df = self.model.transformer.inverse_transform(
-                self.data_interface.get_decoded_data(query_instance))
+            self.data_interface.get_decoded_data(query_instance))
         test_instance_df[self.data_interface.outcome_name] = np.array(np.round(test_pred, 3))
 
         # post-hoc operation on continuous features to enhance sparsity - only for public data

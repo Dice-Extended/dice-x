@@ -1,0 +1,2 @@
+validity_mean,proximity_mean,sparsity_mean,diversity_mean,robustness_mean,fidelity_1nn_0.5_mean,fidelity_1nn_1.0_mean,fidelity_1nn_2.0_mean,validity_sd,proximity_sd,sparsity_sd,diversity_sd,robustness_sd,fidelity_1nn_0.5_sd,fidelity_1nn_1.0_sd,fidelity_1nn_2.0_sd,dataset,backend,method,n
+100.0,-2.252095238095238,0.12599999999999997,4.4890190565994805,0.90128,0.90738,0.8997799999999999,0.86982,0.0,0.5385006707262513,0.15624418356521047,0.6661653872621044,0.020129215238613992,0.060115158195732626,0.05393279642863186,0.04230438294463743,compas-recidivism,TF2,DiCE,50

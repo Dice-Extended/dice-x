@@ -67,7 +67,7 @@ class DicePyTorch(ExplainerBase):
                                   max_iter=5000, project_iter=0, loss_diff_thres=1e-5, loss_converge_maxiter=1, verbose=False,
                                   init_near_query_instance=True, tie_random=False, stopping_threshold=0.5,
                                   posthoc_sparsity_param=0.1, posthoc_sparsity_algorithm="linear", limit_steps_ls=10000,
-                                  perturbation_method="gaussian", **kwargs):
+                                  perturbation_method="gaussian", preprocessing_bins=10, **kwargs):
         """Generates diverse counterfactual explanations.
 
         :param query_instance: Test point of interest. A dictionary of feature names and values or a single row dataframe
@@ -139,7 +139,7 @@ class DicePyTorch(ExplainerBase):
                 query_instance, desired_class, optimizer, learning_rate, min_iter, max_iter,
                 project_iter, loss_diff_thres, loss_converge_maxiter, verbose, init_near_query_instance,
                 tie_random, stopping_threshold, posthoc_sparsity_param, posthoc_sparsity_algorithm, limit_steps_ls,
-                perturbation_method, **kwargs)
+                perturbation_method, preprocessing_bins=preprocessing_bins, **kwargs)
 
         return exp.CounterfactualExamples(
             data_interface=self.data_interface,
@@ -342,10 +342,11 @@ class DicePyTorch(ExplainerBase):
             
         prev_loss = np.inf
         for _ in range(max_iter):
-            with torch.no_grad():
-                self.model.model.eval()
-                pred_i = self.model.model(torch.stack(self.cfs, dim=0))
-                pred_i_prime = self.model.model(perturbed_cfs)
+            # Remove torch.no_grad() to maintain gradient flow
+            self.model.model.eval()
+            pred_i = self.model.model(torch.stack(self.cfs, dim=0))
+            pred_i_prime = self.model.model(perturbed_cfs)
+            
             class_loss = torch.mean((pred_i - pred_i_prime) ** 2)
             distance = torch.norm(perturbed_cfs - torch.stack(self.cfs, dim=0), p=2)
             loss = class_loss + gamma * distance
@@ -358,7 +359,8 @@ class DicePyTorch(ExplainerBase):
             if abs(loss.item() - prev_loss) < tol:
                 break
             prev_loss = loss.item()
-        return perturbed_cfs.detach()
+        # Return without detaching to maintain gradient flow
+        return perturbed_cfs
 
     def compute_diversity_loss(self):
         """Computes the third part (diversity) of the loss function."""
@@ -389,7 +391,7 @@ class DicePyTorch(ExplainerBase):
 
         return regularization_loss
     
-    def _preprocess_for_robustness(self, cfs: torch.Tensor, perturbed_cfs: torch.Tensor) -> tuple:
+    def _preprocess_for_robustness(self, cfs: torch.Tensor, perturbed_cfs: torch.Tensor, num_bins: int=10) -> tuple:
         """
         Conducts preprocessing steps fro robustness loss calculation i.e., converts the given
         dataframes into binarized torch.Tensors
@@ -401,7 +403,7 @@ class DicePyTorch(ExplainerBase):
             tuple: A tuple that contains preprocessed original counterfactual instances and
                 preprocessed perturbed instances of type torch.Tensor.
         """
-        def preprocess_continuous_features(cfs: torch.Tensor, num_bins=10) -> torch.Tensor:
+        def preprocess_continuous_features(cfs: torch.Tensor, num_bins=num_bins) -> torch.Tensor:
             edges = torch.linspace(0.0, 1.0, steps=num_bins + 1)
             all_one_hots = []
             for cont_idx in self.encoded_continuous_feature_indexes:
@@ -428,8 +430,63 @@ class DicePyTorch(ExplainerBase):
 
         return cfs_processed, perturbed_cfs_processed
     
+    def _phi_soft(self, X: torch.Tensor, num_bins: int=10,
+                  sigma: float=0.1, eps: float=1e-8, tau: float=1.0) -> torch.Tensor:
+        """
+        Soft, differentiable feature map for robustness:
+            - Continuous -> soft RBF bins in [0,1] for smooth, differentiable comparison
+            - Categorical one-hot groups -> kept as-is (already differentiable during optimization)
+        Returns: (N, D') tensor suitable for soft-Dice.
+        Assumes X is already in the *model's internal normalized space* (e.g., [0,1] for cont).
+        
+        Note: One-hot encoded categorical features are NOT passed through softmax, as this would
+        make all categories artificially similar. During gradient descent, one-hot vectors
+        naturally become "soft" (e.g., [0.9, 0.05, 0.05]), which preserves distinctiveness.
+        """
+        parts = []
 
-    def compute_robustness_loss(self, perturbed_cfs: torch.Tensor) -> torch.Tensor:
+        if getattr(self, "encoded_continuous_feature_indexes", None):
+            idx = torch.as_tensor(self.encoded_continuous_feature_indexes, dtype=torch.long, device=X.device)
+            cont = X[:, idx]
+
+            cont = cont.clamp(0.0, 1.0)
+            centers = torch.linspace(0.0, 1.0, num_bins, device=X.device, dtype=X.dtype)
+            cont_exp = cont.unsqueeze(-1)
+            rbf = torch.exp(- (cont_exp - centers) ** 2 / (2.0 * (sigma ** 2)))
+            rbf = rbf / (rbf.sum(dim=1, keepdim=True) + eps)
+            parts.append(rbf.reshape(cont.size(0), -1))
+
+            
+        if getattr(self, "encoded_categorical_feature_indexes", None):
+            for grp in self.encoded_categorical_feature_indexes:
+                g = X[:, grp]
+                # Keep one-hot vectors as-is - they're already differentiable
+                # During optimization, they naturally become "soft" one-hot vectors
+                # This preserves categorical distinctiveness better than softmax
+                parts.append(g)
+        return torch.cat(parts, dim=1) if parts else X
+    
+    def compute_robustness_loss_SDS(self, perturbed_cfs: torch.Tensor, eps: float=1e-8) -> torch.Tensor:
+        """
+        Soft-Dice robustness similarity in [0,1]; higher is better.
+        Returns a scalar (mean across CFs) to plug into your total loss with +λ3 * robustness.
+        """
+        cfs = torch.stack(self.cfs, dim=0)
+        if cfs.dim() == 3 and cfs.size(1) == 1:
+            cfs = cfs.squeeze(dim=1)
+
+        if perturbed_cfs.dim() == 3 and perturbed_cfs.size(1) == 1:
+            perturbed_cfs = perturbed_cfs.squeeze(dim=1)
+
+        p = self._phi_soft(cfs)
+        q = self._phi_soft(perturbed_cfs)
+
+        num = 2.0 * (p * q).sum(dim=1)
+        den = (p * p).sum(dim=1) + (q * q).sum(dim=1) + eps
+        sdc = num / den
+        return sdc.mean()
+            
+    def compute_robustness_loss(self, perturbed_cfs: torch.Tensor, preprocessing_bins: int=10) -> torch.Tensor:
         """
         Computes the robustness loss.
 
@@ -447,7 +504,7 @@ class DicePyTorch(ExplainerBase):
         # print("--------------------------------------------------------Perturbed instances--------------------------------------------------------")
         # display(perturbed_cfs_df)
 
-        cfs_processed, perturbed_cfs_processed = self._preprocess_for_robustness(cfs, perturbed_cfs)
+        cfs_processed, perturbed_cfs_processed = self._preprocess_for_robustness(cfs, perturbed_cfs, num_bins=preprocessing_bins)
 
         intersection = torch.sum(torch.min(cfs_processed, perturbed_cfs_processed), dim=1)
         
@@ -461,14 +518,14 @@ class DicePyTorch(ExplainerBase):
         return sorensen_dice_coefficient.mean()
 
 
-    def compute_loss(self, method: str, **kwargs):
+    def compute_loss(self, method: str, preprocessing_bins: int=10, **kwargs):
         """Computes the overall loss"""
         self.yloss = self.compute_yloss()
         self.proximity_loss = self.compute_proximity_loss() if self.proximity_weight > 0 else 0.0
         self.diversity_loss = self.compute_diversity_loss() if self.diversity_weight > 0 else 0.0
         self.regularization_loss = self.compute_regularization_loss()
         perturbed_cfs = self.generate_perturbations('gaussian')
-        self.robustness_loss = self.compute_robustness_loss(perturbed_cfs=perturbed_cfs)
+        self.robustness_loss = self.compute_robustness_loss(perturbed_cfs=perturbed_cfs, preprocessing_bins=preprocessing_bins)
         
         self.loss = self.yloss + (self.proximity_weight * self.proximity_loss) - \
             (self.diversity_weight * self.diversity_loss) - \
@@ -593,7 +650,8 @@ class DicePyTorch(ExplainerBase):
     def find_counterfactuals(self, query_instance, desired_class, optimizer, learning_rate, min_iter,
                              max_iter, project_iter, loss_diff_thres, loss_converge_maxiter, verbose,
                              init_near_query_instance, tie_random, stopping_threshold, posthoc_sparsity_param,
-                             posthoc_sparsity_algorithm, limit_steps_ls, perturbation_method: str, **kwargs):
+                             posthoc_sparsity_algorithm, limit_steps_ls, perturbation_method: str,
+                             preprocessing_bins: int=10, **kwargs):
         """Finds counterfactuals by gradient-descent."""
 
         self._reset_loss_history()
@@ -660,7 +718,7 @@ class DicePyTorch(ExplainerBase):
                 self.model.model.zero_grad()
 
                 # get loss and backpropogate
-                loss_value = self.compute_loss(perturbation_method, **kwargs)
+                loss_value = self.compute_loss(perturbation_method, preprocessing_bins=preprocessing_bins, **kwargs)
                 self.loss.backward()
                 
                 self._populate_loss_history(it, self.yloss.detach().item(), self.proximity_loss.detach().item(),

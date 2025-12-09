@@ -1,0 +1,2 @@
+dataset,backend,method,lambda1,lambda2,lambda3,robustness_keep_rate_mean,div_cont_mad_mean,prox_cont_mad_negmean_mean,sparsity_cont_mean
+lending-club,TF2,DiCE,0.7591104805282696,4.132765459466365,0.0,0.888888888888889,3.0658036317883974,-1.811133518446749,0.2

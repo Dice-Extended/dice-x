@@ -125,7 +125,7 @@ class PYTDataset(torch.utils.data.Dataset):
 
 
 class PYTModel(nn.Module):
-    def __init__(self, in_features, model_save_dir: str):
+    def __init__(self, in_features):
         super(PYTModel, self).__init__()
         self.model = nn.Sequential(
             nn.Linear(in_features, 20),
@@ -143,7 +143,7 @@ class PYTModel(nn.Module):
             'optimizer_state_dict': []
         }
         self.best_val_acc = 0.0
-        self.model_save_dir = model_save_dir
+        #self.model_save_dir = model_save_dir
 
         
 

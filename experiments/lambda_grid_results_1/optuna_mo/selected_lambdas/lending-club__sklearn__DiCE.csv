@@ -1,0 +1,2 @@
+validity_mean,proximity_mean,sparsity_mean,diversity_mean,robustness_mean,fidelity_1nn_0.5_mean,fidelity_1nn_1.0_mean,fidelity_1nn_2.0_mean,validity_sd,proximity_sd,sparsity_sd,diversity_sd,robustness_sd,fidelity_1nn_0.5_sd,fidelity_1nn_1.0_sd,fidelity_1nn_2.0_sd,dataset,backend,method,n
+100.0,-0.32808386532856715,0.28800000000000003,1.4372178566661769,0.57428,0.3709,0.3144,0.25956,0.0,0.4684710964479494,0.10279760181432011,0.3505415761308628,0.04266626062731965,0.16672857693672954,0.15237119016348444,0.13291890423126734,lending-club,sklearn,DiCE,50

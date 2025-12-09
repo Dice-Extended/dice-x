@@ -9,7 +9,7 @@ from dice_ml_x.data_interfaces.private_data_interface import PrivateData
 from dice_ml_x.explainer_interfaces.explainer_base import ExplainerBase
 
 
-class DiceX(ExplainerBase):
+class Dice(ExplainerBase):
     """An interface class to different DiCE implementations."""
 
     def __init__(self, data_interface, model_interface, method="random",  **kwargs):

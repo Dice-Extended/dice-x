@@ -1,0 +1,2 @@
+validity_mean,proximity_mean,sparsity_mean,diversity_mean,robustness_mean,fidelity_1nn_0.5_mean,fidelity_1nn_1.0_mean,fidelity_1nn_2.0_mean,validity_sd,proximity_sd,sparsity_sd,diversity_sd,robustness_sd,fidelity_1nn_0.5_sd,fidelity_1nn_1.0_sd,fidelity_1nn_2.0_sd,dataset,backend,method,n
+100.0,-0.6551333333333333,0.352,3.035733346009254,0.8592,0.62336,0.6097,0.59526,0.0,0.114426916738923,0.11292041625925431,0.2537742656865872,0.05775104911141778,0.1440250488417815,0.1489846246004833,0.165735935777861,adult-income,PYT,DiCE,50

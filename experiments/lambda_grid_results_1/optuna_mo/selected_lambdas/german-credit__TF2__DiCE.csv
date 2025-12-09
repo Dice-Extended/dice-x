@@ -1,0 +1,2 @@
+validity_mean,proximity_mean,sparsity_mean,diversity_mean,robustness_mean,fidelity_1nn_0.5_mean,fidelity_1nn_1.0_mean,fidelity_1nn_2.0_mean,validity_sd,proximity_sd,sparsity_sd,diversity_sd,robustness_sd,fidelity_1nn_0.5_sd,fidelity_1nn_1.0_sd,fidelity_1nn_2.0_sd,dataset,backend,method,n
+100.0,0.28851301248765326,0.6108571428571429,1.2772400003482658,0.87816,0.59776,0.59612,0.59198,0.0,0.1054426096368873,0.0482565682214327,0.1600105042065967,0.04098549270467415,0.0634602752169595,0.06061273524160898,0.05353674686891352,german-credit,TF2,DiCE,50

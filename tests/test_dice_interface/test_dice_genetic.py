@@ -188,7 +188,7 @@ class TestDiceGeneticMultiClassificationMethods:
         num_class = len(df['Outcome'].unique())
         model = MulticlassNetwork(input_size=df.drop("Outcome", axis=1).shape[1], num_class=num_class)
         m = dice_ml_x.Model(model=model, backend=backend)
-        exp = dice_ml_x.DiceX(d, m, method=method)
+        exp = dice_ml_x.Dice(d, m, method=method)
 
         # Test the function that returns the predictions
         _, _, preds = exp.build_KD_tree(

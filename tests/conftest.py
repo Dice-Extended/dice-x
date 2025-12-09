@@ -34,7 +34,7 @@ def random_binary_classification_exp_object(request):
     else:
         model = _load_custom_testing_binary_model()
         m = dice_ml_x.Model(model=model, backend=backend)
-    exp = dice_ml_x.DiceX(d, m, method='random')
+    exp = dice_ml_x.Dice(d, m, method='random')
     return exp
 
 
@@ -58,7 +58,7 @@ def random_str_binary_classification_exp_object(request):
     else:
         model = _load_custom_testing_binary_str_model()
         m = dice_ml_x.Model(model=model, backend=backend)
-    exp = dice_ml_x.DiceX(d, m, method="random")
+    exp = dice_ml_x.Dice(d, m, method="random")
     return exp
 
 
@@ -80,7 +80,7 @@ def random_multi_classification_exp_object(request):
     else:
         model = _load_custom_testing_multiclass_model()
         m = dice_ml_x.Model(model=model, backend=backend)
-    exp = dice_ml_x.DiceX(d, m, method='random')
+    exp = dice_ml_x.Dice(d, m, method='random')
     return exp
 
 
@@ -101,7 +101,7 @@ def random_str_multi_classification_exp_object(request):
     else:
         model = _load_custom_testing_multiclass_str_model()
         m = dice_ml_x.Model(model=model, backend=backend)
-    exp = dice_ml_x.DiceX(d, m, method='random')
+    exp = dice_ml_x.Dice(d, m, method='random')
     return exp
 
 
@@ -122,7 +122,7 @@ def random_regression_exp_object(request):
     else:
         model = _load_custom_testing_regression_model()
         m = dice_ml_x.Model(model=model, backend=backend, model_type='regressor')
-    exp = dice_ml_x.DiceX(d, m, method='random')
+    exp = dice_ml_x.Dice(d, m, method='random')
     return exp
 
 
@@ -137,7 +137,7 @@ def genetic_binary_classification_exp_object(request):
     else:
         model = _load_custom_testing_binary_model()
         m = dice_ml_x.Model(model=model, backend=backend)
-    exp = dice_ml_x.DiceX(d, m, method='genetic')
+    exp = dice_ml_x.Dice(d, m, method='genetic')
     return exp
 
 
@@ -154,7 +154,7 @@ def genetic_binary_str_classification_exp_object(request):
     else:
         model = _load_custom_testing_binary_str_model()
         m = dice_ml_x.Model(model=model, backend=backend)
-    exp = dice_ml_x.DiceX(d, m, method="genetic")
+    exp = dice_ml_x.Dice(d, m, method="genetic")
     return exp
 
 
@@ -165,7 +165,7 @@ def genetic_multi_classification_exp_object(request):
     d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     model = _load_custom_testing_multiclass_model()
     m = dice_ml_x.Model(model=model, backend=backend)
-    exp = dice_ml_x.DiceX(d, m, method='genetic')
+    exp = dice_ml_x.Dice(d, m, method='genetic')
     return exp
 
 
@@ -176,7 +176,7 @@ def genetic_str_multi_classification_exp_object(request):
     d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     model = _load_custom_testing_multiclass_str_model()
     m = dice_ml_x.Model(model=model, backend=backend)
-    exp = dice_ml_x.DiceX(d, m, method='genetic')
+    exp = dice_ml_x.Dice(d, m, method='genetic')
     return exp
 
 
@@ -191,7 +191,7 @@ def genetic_regression_exp_object(request):
     else:
         model = _load_custom_testing_regression_model()
         m = dice_ml_x.Model(model=model, backend=backend, model_type='regressor')
-    exp = dice_ml_x.DiceX(d, m, method='genetic')
+    exp = dice_ml_x.Dice(d, m, method='genetic')
     return exp
 
 
@@ -202,7 +202,7 @@ def KD_binary_classification_exp_object():
     d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     model = _load_custom_testing_binary_model()
     m = dice_ml_x.Model(model=model, backend=backend)
-    exp = dice_ml_x.DiceX(d, m, method='kdtree')
+    exp = dice_ml_x.Dice(d, m, method='kdtree')
     return exp
 
 
@@ -213,7 +213,7 @@ def KD_binary_vars_classification_exp_object():
     d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     model = _load_custom_vars_dataset_model()
     m = dice_ml_x.Model(model=model, backend=backend)
-    exp = dice_ml_x.DiceX(d, m, method='kdtree')
+    exp = dice_ml_x.Dice(d, m, method='kdtree')
     return exp
 
 
@@ -224,7 +224,7 @@ def KD_multi_classification_exp_object():
     d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     model = _load_custom_testing_multiclass_model()
     m = dice_ml_x.Model(model=model, backend=backend)
-    exp = dice_ml_x.DiceX(d, m, method='kdtree')
+    exp = dice_ml_x.Dice(d, m, method='kdtree')
     return exp
 
 
@@ -235,7 +235,7 @@ def KD_regression_exp_object():
     d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     model = _load_custom_testing_regression_model()
     m = dice_ml_x.Model(model=model, backend=backend, model_type='regressor')
-    exp = dice_ml_x.DiceX(d, m, method='kdtree')
+    exp = dice_ml_x.Dice(d, m, method='kdtree')
     return exp
 
 
@@ -246,7 +246,7 @@ def binary_classification_exp_object(method="random"):
     d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     model = _load_custom_testing_binary_model()
     m = dice_ml_x.Model(model=model, backend=backend)
-    exp = dice_ml_x.DiceX(d, m, method=method)
+    exp = dice_ml_x.Dice(d, m, method=method)
     return exp
 
 
@@ -257,7 +257,7 @@ def multi_classification_exp_object(method="random"):
     d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     model = _load_custom_testing_multiclass_model()
     m = dice_ml_x.Model(model=model, backend=backend)
-    exp = dice_ml_x.DiceX(d, m, method=method)
+    exp = dice_ml_x.Dice(d, m, method=method)
     return exp
 
 
@@ -268,7 +268,7 @@ def regression_exp_object(method="random"):
     d = dice_ml_x.Data(dataframe=dataset, continuous_features=['Numerical'], outcome_name='Outcome')
     model = _load_custom_testing_regression_model()
     m = dice_ml_x.Model(model=model, backend=backend, model_type='regressor')
-    exp = dice_ml_x.DiceX(d, m, method=method)
+    exp = dice_ml_x.Dice(d, m, method=method)
     return exp
 
 

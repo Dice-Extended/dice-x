@@ -1,0 +1,2 @@
+dataset,backend,method,lambda1,lambda2,lambda3,robustness_keep_rate_mean,div_cont_mad_mean,prox_cont_mad_negmean_mean,sparsity_cont_mean
+adult-income,TF2,DiCE,5.265761277157429,0.2327067708383781,0.0,0.8555555555555557,0.14555555555555558,-0.08388888888888889,0.6833333333333333

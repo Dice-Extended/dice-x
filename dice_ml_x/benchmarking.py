@@ -48,11 +48,20 @@ class Benchmarking:
         
     def preprocess_data(self, backend: str, df: pd.DataFrame, continuous_features: list,
                         target_name: str, batch_size: int, fitted_pipeline=None,
-                        pyt_scaler=None, pyt_encoder=None, pyt_label_encoder=None,):
-        train_dataset, test_dataset, y_train, y_test = self.split_data(df, target_name)
-        
+                        pyt_scaler=None, pyt_encoder=None, pyt_label_encoder=None,
+                        test_size=0.2):
+        if test_size != 0.0:
+            train_dataset, test_dataset, y_train, y_test = self.split_data(df, target_name, test_size=test_size)
+            
+            x_test = test_dataset.drop(target_name, axis=1)
+        else:
+            train_dataset = df
+            y_train = df[target_name]
+            x_test = None
+            y_test = None
+            test_dataset = None
+
         x_train = train_dataset.drop(target_name, axis=1)
-        x_test = test_dataset.drop(target_name, axis=1)
 
         if backend == "sklearn":
             categorical = x_train.columns.difference(continuous_features)
@@ -76,22 +85,29 @@ class Benchmarking:
                 scaler = pyt_train_dataset.scaler
                 encoder = pyt_train_dataset.encoder
                 target_encoder = pyt_train_dataset.target_encoder
-                pyt_test_dataset = neuralnetworks.PYTDataset(df, scaler=scaler,
-                                                             encoder=encoder,
-                                                              target_encoder=target_encoder,
-                                                               target_column=target_name, train=False)
+                if test_dataset is not None:
+                    pyt_test_dataset = neuralnetworks.PYTDataset(df, scaler=scaler,
+                                                                encoder=encoder,
+                                                                target_encoder=target_encoder,
+                                                                target_column=target_name, train=False)
+                else:
+                    pyt_test_dataset = None
             else:
                 pyt_train_dataset = neuralnetworks.PYTDataset(df, target_column=target_name, train=True)
-                pyt_test_dataset = neuralnetworks.PYTDataset(df, target_column=target_name, train=False)
+                if test_dataset is not None:
+                    pyt_test_dataset = neuralnetworks.PYTDataset(df, target_column=target_name, train=False)
+                else:
+                    pyt_test_dataset = None
+
             train_df = pyt_train_dataset.train_dataset_df
-            test_df = pyt_train_dataset.test_dataset_df
+            test_df = pyt_train_dataset.test_dataset_df if test_dataset is not None else None
             y_train_df = pyt_train_dataset.y_train_df
-            y_test_df = pyt_train_dataset.y_test_df
+            y_test_df = pyt_train_dataset.y_test_df if test_dataset is not None else None
             scaler = pyt_train_dataset.scaler
             encoder = pyt_train_dataset.encoder
             target_encoder = pyt_train_dataset.target_encoder
             pyt_train_dataloader = DataLoader(pyt_train_dataset, batch_size=batch_size, shuffle=True)
-            pyt_test_dataloader = DataLoader(pyt_test_dataset, batch_size=batch_size // 4, shuffle=False)
+            pyt_test_dataloader = DataLoader(pyt_test_dataset, batch_size=batch_size // 4, shuffle=False) if test_dataset is not None else None
             
             return pyt_train_dataloader, pyt_test_dataloader, train_df, test_df, y_train_df, y_test_df, None, scaler, encoder, target_encoder
         elif backend == "TF2":
@@ -117,13 +133,13 @@ class Benchmarking:
 
 
             x_train_transformed_data = transformation_pipeline.transform(x_train)
-            x_test_transformed_data = transformation_pipeline.transform(x_test)
+            x_test_transformed_data = transformation_pipeline.transform(x_test) if test_dataset is not None else None
 
             tf_train_dataset = tf.data.Dataset.from_tensor_slices((x_train_transformed_data, y_train.values))
-            tf_test_dataset = tf.data.Dataset.from_tensor_slices((x_test_transformed_data, y_test.values))
+            tf_test_dataset = tf.data.Dataset.from_tensor_slices((x_test_transformed_data, y_test.values)) if test_dataset is not None else None
 
             tf_train_dataset = tf_train_dataset.shuffle(len(x_train)).batch(batch_size)
-            tf_test_dataset = tf_test_dataset.batch(batch_size=batch_size)
+            tf_test_dataset = tf_test_dataset.batch(batch_size=batch_size) if test_dataset is not None else None
 
             return tf_train_dataset, tf_test_dataset, train_dataset, test_dataset, y_train, y_test, transformation_pipeline, None, None, None
     
@@ -134,18 +150,15 @@ class Benchmarking:
 
     def compute_RF_metrics(self, model, x_test, y_test):
         y_pred = model.predict(x_test)
-        y_true = y_test
-        rf_f1 = f1_score(y_true, y_pred)
-        rf_accuracy = accuracy_score(y_true, y_pred)
-        rf_precision = precision_score(y_true, y_pred)
-        rf_recall = recall_score(y_true, y_pred)
-        rf_rocauc = roc_auc_score(y_true, y_pred)
+        print(y_pred == y_test)
+        y_proba = model.predict_proba(x_test)[:, 1]  # only for binary classification
+
         return {
-            'accuracy': rf_accuracy,
-            'f1_score': rf_f1,
-            'recall': rf_recall,
-            'precision': rf_precision,
-            'auc': rf_rocauc
+            'accuracy': accuracy_score(y_test, y_pred),
+            'f1_score': f1_score(y_test, y_pred, average='binary'),
+            'recall': recall_score(y_test, y_pred, average='binary'),
+            'precision': precision_score(y_test, y_pred, average='binary'),
+            'auc': roc_auc_score(y_test, y_proba)
         }
     
     
@@ -181,20 +194,15 @@ class Benchmarking:
                 all_outputs.append(test_outputs.cpu())
                 all_labels.append(test_labels.cpu())
 
-        # 2. Concatenate predictions/labels into single tensors
         all_outputs = torch.cat(all_outputs, dim=0)  # shape [total_samples]
         all_labels = torch.cat(all_labels, dim=0)    # shape [total_samples]
 
-        # 3. Compute accuracy across the entire dataset
         total_samples = len(test_dataloader.dataset)
         accuracy = correct_test_preds / total_samples
-
-        # 4. Build 2D probabilities for multiclass_xxx metrics:
         p_class1 = all_outputs
         p_class0 = 1.0 - p_class1
         probs_2d = torch.stack([p_class0, p_class1], dim=1)  # shape [total_samples, 2]
 
-        # 5. Compute metrics once on the entire set
         f1_score_val = multiclass_f1_score(probs_2d, all_labels, num_classes=2, average='macro').item()
         recall_val   = multiclass_recall(probs_2d, all_labels, num_classes=2, average='macro').item()
         precision_val= multiclass_precision(probs_2d, all_labels, num_classes=2, average='macro').item()
@@ -374,18 +382,21 @@ class Benchmarking:
                     }
 
                     if backend == "PYT":
-                        model_path = os.path.join(artefact_path, f"{dataset_name}_{backend}_model.pth")
+                        model_dir = os.path.join(artefact_path, dataset_name)
+                        os.makedirs(model_dir, exist_ok=True)
+                        model_path = os.path.join(model_dir, f"{backend}_model.pt")
+
                         torch.save(model.state_dict(), model_path)
                         backend_results['model_path'] = model_path
                     elif backend == "TF2":
-                        model_path = os.path.join(artefact_path, f"{dataset_name}_{backend}_model")
+                        model_dir = os.path.join(artefact_path, dataset_name)
+                        os.makedirs(model_dir, exist_ok=True)
+                        model_path = os.path.join(model_dir, f"{backend}_model")
                         model.save_weights(model_path, save_format='tf')    
                         backend_results['model_path'] = model_path
                     else:  # sklearn
                         backend_results['model'] = model
 
-                    
-                    
                     print(f"the dataset is : {dataset_name}, the backend is : {backend}")
                         
                     cfs, input_instance, generation_time, exp_loss_history, metrics = self.generate_cfs(df,
@@ -434,7 +445,7 @@ class Benchmarking:
         
         d = dice_ml_x.Data(dataframe=train_dataset, continuous_features=list(numerical), outcome_name=target_name)
 
-        exp = dice_ml_x.DiceX(d, m, method=exp_method)
+        exp = dice_ml_x.Dice(d, m, method=exp_method)
         
         kwargs = {
             'gaussian': {
@@ -475,7 +486,7 @@ class Benchmarking:
     
     def compute_metrics_pytorch(self, data_class, C: pd.DataFrame,
                         model: any, original_instance: pd.DataFrame,
-                        target_name: str, explainer: dice_ml_x.DiceX, explainer_options: OrderedDict) -> dict:
+                        target_name: str, explainer: dice_ml_x.Dice, explainer_options: OrderedDict) -> dict:
         x_ohe = data_class.get_ohe_min_max_normalized_data(original_instance)
         x_ohe_tensor = torch.tensor(x_ohe.values, dtype=torch.float32)
         x_ohe_tensor_targetless = data_class.get_ohe_min_max_normalized_data(original_instance.drop(columns=[target_name]))
@@ -648,7 +659,7 @@ class Benchmarking:
         self, data_class, C: pd.DataFrame, 
         model: tf.keras.Model, 
         original_instance: pd.DataFrame,
-        target_name: str, explainer: dice_ml_x.DiceX, 
+        target_name: str, explainer: dice_ml_x.Dice, 
         explainer_options: OrderedDict
     ) -> dict:
         """

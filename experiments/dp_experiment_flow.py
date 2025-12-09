@@ -201,7 +201,7 @@ def generate_cfs(clf, ae, train_df, x_test, target, cont_feats,
     if backend == "DP_PYT":
         dice_x_opts["dp_autoencoder"] = ae
     
-    exp = dice_ml_x.DiceX(**dice_x_opts)
+    exp = dice_ml_x.Dice(**dice_x_opts)
     input_instance = x_test[1:2]
     learning_rate = 0.03 if backend == "DP_PYT" and ds_name == "adult-income" else 0.05
     exp_options = OrderedDict(query_instances=input_instance, total_CFs=number_of_cfs, max_iter=1000, desired_class="opposite",

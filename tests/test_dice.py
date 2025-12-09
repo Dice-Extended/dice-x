@@ -24,7 +24,7 @@ class TestBaseExplainerLoader:
                             outcome_name='income')
         ML_modelpath = helpers.get_adult_income_modelpath(backend=backend)
         m = dice_ml_x.Model(model_path=ML_modelpath, backend=backend, func="ohe-min-max")
-        exp = dice_ml_x.DiceX(d, m, method=method)
+        exp = dice_ml_x.Dice(d, m, method=method)
         return exp
 
     def test_tf(self):

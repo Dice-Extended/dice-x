@@ -1,0 +1,2 @@
+dataset,backend,method,lambda1,lambda2,lambda3,robustness_keep_rate_mean,div_cont_mad_mean,prox_cont_mad_negmean_mean,sparsity_cont_mean
+compas-recidivism,sklearn,DiCE,0.23606794572813067,1.0677482709481354,0.0,0.8777777777777779,0.29523809523809524,-0.15238095238095242,0.8666666666666668

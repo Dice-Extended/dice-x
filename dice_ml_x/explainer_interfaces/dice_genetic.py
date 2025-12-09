@@ -17,6 +17,7 @@ from dice_ml_x.constants import ModelTypes
 from dice_ml_x.explainer_interfaces.explainer_base import ExplainerBase
 
 from dice_ml_x.perturbation_factory import PerturbationFactory
+from typing import Optional
 
 
 class DiceGenetic(ExplainerBase):
@@ -42,8 +43,9 @@ class DiceGenetic(ExplainerBase):
             "sparsity_loss": [],
             "proximity_loss": [],
             "robustness_loss": [],
-            "total_loss": [] 
+            "total_loss": []
         }
+        self.original_instance: pd.DataFrame = pd.DataFrame()
 
         # Initializing a label encoder to obtain label-encoded values for categorical variables
         self.labelencoder = self.data_interface.fit_label_encoders()
@@ -221,7 +223,8 @@ class DiceGenetic(ExplainerBase):
                                   categorical_penalty=0.1, algorithm="DiverseCF", features_to_vary="all",
                                   permitted_range=None, yloss_type="hinge_loss", diversity_loss_type="dpp_style:inverse_dist",
                                   feature_weights="inverse_mad", stopping_threshold=0.5, posthoc_sparsity_param=0.1,
-                                  posthoc_sparsity_algorithm="binary", maxiterations=500, thresh=1e-2, verbose=False, **kwargs):
+                                  posthoc_sparsity_algorithm="binary", maxiterations=500, thresh=1e-2, verbose=False,
+                                  preprocessing_bins=10, **kwargs):
         """Generates diverse counterfactual explanations
 
         :param query_instance: A dictionary of feature names and values. Test point of interest.
@@ -284,7 +287,7 @@ class DiceGenetic(ExplainerBase):
         self.num_output_nodes = None
         if self.model.model_type == ModelTypes.Classifier:
             self.num_output_nodes = self.model.get_num_output_nodes2(query_instance)
-
+        self.original_instance = query_instance_orig.copy()
         query_instance = self.label_encode(query_instance)
         query_instance = np.array(query_instance.values[0])
         self.x1 = query_instance
@@ -306,7 +309,8 @@ class DiceGenetic(ExplainerBase):
                                       sparsity_weight, diversity_weight, robustness_weight, categorical_penalty, verbose)
 
         query_instance_df = self.find_counterfactuals(query_instance, desired_range, desired_class, perturbation_method,
-                                                      features_to_vary, maxiterations, thresh, verbose, **kwargs)
+                                                      features_to_vary, maxiterations, thresh,
+                                                      verbose, preprocessing_bins=preprocessing_bins, **kwargs)
 
         desired_class_param = self.decode_model_output(pd.Series(self.target_cf_class[0]))[0] \
             if hasattr(self, 'target_cf_class') else desired_class
@@ -493,44 +497,161 @@ class DiceGenetic(ExplainerBase):
         perturbed_cfs_df.reset_index(drop=True, inplace=True)
         return perturbed_cfs_df
 
-    def generate_perturbations(self, input_instance: pd.DataFrame, method: str, **kwargs) -> pd.DataFrame:
-        """
-        Generates perturbations for given counterfactual instances.
-
-        Args:
-            input_instance (pandas.DataFrame): Counterfactual instance that will be perturbed.
-            method (str): Perturbation strategy. Supported methods:
-                - "gaussian" (GaussianPerturbation)
-                - "random" (RandomPerturbation)
-                - "spherical" (SphericalPerturbation)
-            **kwargs (dict): Additional arguments that will be passed to the perturbation generation method.
-
-        Returns:
-            pandas.DataFrame: Perturbed counterfactuals as pandas.DataFrame.
-        """
-        
-        perturbation_instance = PerturbationFactory.get_perturbation(method, **kwargs)
-        perturbed_cfs = []
-
-        for idx, c_i in input_instance.iterrows():
-            c_i_df = pd.DataFrame([c_i])
-            valid_perturbation_found = False
-
-            while not valid_perturbation_found:
-                c_i_prime: pd.DataFrame = perturbation_instance.generate(c_i=c_i_df)
-                is_c_i_prime_valid = perturbation_instance.validate(c_i_df, c_i_prime,
-                                                                    self.predict_fn, 0.05)
-            
-                if is_c_i_prime_valid:
-                    perturbed_cfs.append(c_i_prime)
-                    valid_perturbation_found = True
-                else:
-                    c_i_prime = pd.DataFrame
-
-        perturbed_cfs_df = pd.concat(perturbed_cfs, ignore_index=True)
-        perturbed_cfs_df = perturbed_cfs_df.reindex(columns=input_instance.columns, fill_value=None)
-        return perturbed_cfs_df
     
+    def get_validity_percentage(self) -> float:
+        """
+        Returns the percentage of generated counterfactuals that
+        actually satisfy the desired outcome condition
+        (`self.is_cf_valid`).
+
+        Notes
+        -----
+        • Uses `self.final_cfs`, which is populated in
+        `find_counterfactuals`.  
+        • If no CFs were generated, returns 0.0.
+        """
+        # make sure we have CFs
+        if not hasattr(self, "final_cfs") or self.final_cfs is None or len(self.final_cfs) == 0:
+            return 0.0
+
+        # numpy-ise and drop duplicates so duplicates don't inflate validity
+        cfs_np = np.unique(np.asarray(self.final_cfs), axis=0)
+
+        # model predictions for each unique CF
+        preds = self.predict_fn_scores(cfs_np)
+
+        # count CFs that meet the desired target condition
+        valid_mask = np.array([self.is_cf_valid(p) for p in preds])
+        validity_pct = 100.0 * valid_mask.mean()
+        return float(validity_pct)
+
+
+    def generate_perturbations_fast(
+        self,
+        input_df: pd.DataFrame,
+        method: str = "gaussian",
+        tol: float = 0.05,
+        batch_size: int = 64,
+        n_attempts: int = 5,
+        std_dev: float = 0.10,
+        max_radius: float = 0.5,
+        force_flip_constraint: bool=True,
+    ) -> pd.DataFrame:
+        """
+        Much faster perturbation generator.
+        Returns ONE valid perturbation for each row of `input_df`.
+        Falls back to the original row if none found.
+        """
+        rng = np.random.default_rng()
+
+        cont_cols = self.data_interface.continuous_feature_names
+        cat_cols = self.data_interface.categorical_feature_names
+        ranges = self.data_interface.get_features_range_float()[1]
+
+        # ---------- constant arrays for vectorised ops ----------
+        X_base = input_df[cont_cols].to_numpy()
+        cont_lo = np.array([ranges[c][0] for c in cont_cols])
+        cont_hi = np.array([ranges[c][1] for c in cont_cols])
+        span = cont_hi - cont_lo
+
+        # categorical lookup tables
+        cat_choices = {c: np.array(self.data_interface.get_features_range()[1][c])
+                    for c in cat_cols}
+
+        # predict once for all base points
+        base_scores = self.predict_fn_scores(input_df)
+        base_cls = base_scores.argmax(axis=1)
+        base_prob = base_scores[np.arange(len(base_scores)), base_cls]
+
+        # storage for results
+        found_mask = np.zeros(len(input_df), dtype=bool)
+        out_rows = input_df.copy()
+
+        # ---------- attempt loop ----------
+        radiuses = max_radius * (1.5 ** np.arange(n_attempts))
+        sigmas = std_dev * (1.5 ** np.arange(n_attempts))
+
+        for radius, sigma in zip(radiuses, sigmas):
+            if found_mask.all():
+                break  # everything satisfied
+
+            # ~~~~~ 1. build a candidate batch for ALL unresolved rows ~~~~~
+            need_idx  = np.where(~found_mask)[0]
+            n_need    = len(need_idx)
+            repeat    = np.repeat(need_idx, batch_size)        # len = n_need*batch_size
+
+            # base continuous part
+            X_rep  = X_base[repeat]
+
+            # noise matrix
+            if method == "gaussian":
+                noise = rng.normal(scale=sigma * span, size=X_rep.shape)
+            elif method == "random":
+                noise = rng.uniform(-radius * span, radius * span, size=X_rep.shape)
+            elif method == "spherical":
+                dir   = rng.normal(size=X_rep.shape)
+                dir  /= np.linalg.norm(dir, axis=1, keepdims=True)
+                r     = rng.uniform(0, radius * span, size=(len(dir), 1))
+                noise = dir * r
+            else:
+                raise ValueError(method)
+
+            X_cont = np.clip(X_rep + noise, cont_lo, cont_hi)
+
+            # categorical part – vectorised flip with prob 0.2
+            cat_part = input_df.iloc[repeat][cat_cols].copy()
+            flip_mask = rng.random(size=cat_part.shape) < 0.2
+            for j, col in enumerate(cat_cols):
+                choices = cat_choices[col]
+                rnd_vals = rng.choice(choices, size=len(cat_part))
+                cat_part.loc[flip_mask[:, j], col] = rnd_vals[flip_mask[:, j]]
+
+            # assemble candidate DataFrame
+            cand_df = pd.DataFrame(X_cont, columns=cont_cols, index=None)
+            cand_df[cat_cols] = cat_part.values
+            cand_df.reset_index(drop=True, inplace=True)
+
+            # ~~~~~ 2. evaluate in one model call ~~~~~
+            cand_scores = self.predict_fn_scores(cand_df)
+            cand_prob   = cand_scores[:, base_cls[repeat]]
+            delta       = np.abs(cand_prob - base_prob[repeat])
+
+            # mark first hit for each original row (keep vectorised uniqueness)
+            if force_flip_constraint:
+                hit_mask = delta <= tol
+            else:
+                hit_mask = np.ones(len(delta), dtype=bool)
+    
+            if not hit_mask.any():
+                continue
+
+            flat_hits = np.flatnonzero(hit_mask)                 # 1-D candidate indices
+            if flat_hits.size == 0:
+                continue
+
+            # -- keep only hits whose integer-division mapping is < n_need
+            row_idx  = flat_hits // batch_size                   # proposed base-row ids
+            valid    = row_idx < n_need
+            flat_hits = flat_hits[valid]
+            row_idx   = row_idx[valid]
+            if flat_hits.size == 0:
+                continue
+
+            # map to absolute row numbers in the original DataFrame
+            base_rows = need_idx[row_idx]
+
+            # retain the first hit per base row
+            _, first_pos = np.unique(base_rows, return_index=True)
+            hit_rows_idx = flat_hits[first_pos]
+            base_rows    = base_rows[first_pos]
+            chosen       = cand_df.iloc[hit_rows_idx]
+
+            cols_to_write = cont_cols + cat_cols
+            if cols_to_write:
+                out_rows.loc[base_rows, cols_to_write] = chosen[cols_to_write].values
+            found_mask[base_rows] = True
+
+        return out_rows.reset_index(drop=True)    
 
     def l2_objective(self, perturbed_df: pd.DataFrame, original_df: pd.DataFrame, predict_proba_fn: callable):
         """
@@ -550,18 +671,17 @@ class DiceGenetic(ExplainerBase):
         l2_loss = (perturbed_pred - original_pred) ** 2
         return l2_loss
     
-    def _preprocess_for_robustness(self, cfs: pd.DataFrame, perturbed_cfs: pd.DataFrame) -> tuple:
+    def _preprocess_for_robustness(self, cfs: pd.DataFrame, perturbed_cfs: pd.DataFrame, num_bins: int=10) -> tuple:
 
         continuous_cols = self.data_interface.continuous_feature_names
         categorical_cols = self.data_interface.categorical_feature_names
-
+        
         def preprocess_continuous_features(data: pd.DataFrame):
             binarized = []
             ranges = self.data_interface.get_features_range_float()[1]
 
             for col in continuous_cols:
                 col_min, col_max = ranges[col]
-                num_bins = 10
                 bins = np.linspace(col_min, col_max, num=num_bins + 1)
                 binned = np.digitize(data[col], bins, right=False)
                 binned = np.clip(binned, 0, len(bins) - 1)
@@ -590,7 +710,65 @@ class DiceGenetic(ExplainerBase):
 
         return cfs_processed, perturbed_cfs_processed
 
-    def compute_robustness_loss(self, cfs: pd.DataFrame, perturbed_cfs: pd.DataFrame) -> float:
+    def _phi_soft(self, X_df: pd.DataFrame, num_bins=10, sigma: float=0.1, eps: float=1e-8) -> np.ndarray:
+        """Soft, differentiable feature map for robustness:
+            - Categoricals: per-group softmax (relaxes one-hot)
+            - Continuous: soft RBF-binning in [0,1] (num_bins bins)
+        """
+        X = X_df.to_numpy(dtype=float)
+        parts = []
+        cont_idxs = X_df.columns.get_indexer(self.data_interface.continuous_feature_names)
+        cat_idxs = list(set(range(len(X_df.columns))) - set(cont_idxs))
+
+        cont = X[:, cont_idxs]
+        cont = np.clip(cont, 0.0, 1.0)
+
+        centers = np.linspace(0.0, 1.0, num_bins)
+        cont_exp = cont[..., None]
+        centers = centers.reshape(1, 1, -1)
+        rbf = np.exp(- (cont_exp - centers) ** 2 / (2 * sigma ** 2))
+        rbf /= (rbf.sum(axis=-1, keepdims=True) + eps)
+        parts.append(rbf.reshape(cont.shape[0], -1))
+
+        for idx in cat_idxs:
+            g = X[:, idx:idx+1] if isinstance(idx, (int, np.integer)) else X[:, idx]
+            if g.ndim == 1:
+                g = g.reshape(-1, 1)
+            
+            """ g_max = g.max(axis=1, keepdims=True)
+            g = g - g_max
+            e = np.exp(g)
+            sm = e / (e.sum(axis=1, keepdims=True) + eps) """
+            parts.append(g)
+        return np.concatenate(parts, axis=1) if parts else X
+
+    def compute_robustness_loss_SDS(self, cfs: np.ndarray, perturbed_cfs: pd.DataFrame,
+                                    num_bins: int=10, sigma: float=0.1, eps: float=1e-8):
+        """
+        Soft-Dice robustness (differentiable surrogate). Returns per-sample similarities in [0,1].
+        """
+        
+        cfs_df_ohe = self.data_interface.get_ohe_min_max_normalized_data(self.label_decode_cfs(cfs))
+        perturbed_cfs_df_ohe = self.data_interface.get_ohe_min_max_normalized_data(perturbed_cfs)
+        
+        if not isinstance(cfs_df_ohe, pd.DataFrame) or not isinstance(perturbed_cfs_df_ohe, pd.DataFrame):
+            raise ValueError("Both `cfs` and `perturbed_cfs` must be of type pandas.DataFrame")
+        
+        if len(cfs_df_ohe) != len(perturbed_cfs_df_ohe):
+            raise ValueError("Row counts of `cfs` and `perturbed_cfs` must match")
+        
+        p = self._phi_soft(cfs_df_ohe, num_bins=num_bins, sigma=sigma)
+        q = self._phi_soft(perturbed_cfs_df_ohe, num_bins=num_bins, sigma=sigma)
+
+        num = 2.0 * np.sum(p * q, axis=1)
+        den = np.sum(p * p, axis=1) + np.sum(q * q, axis=1) + eps
+        sdc = num / den
+        # Return per-sample robustness scores, not the mean
+        return sdc
+
+
+
+    def compute_robustness_loss(self, cfs: pd.DataFrame, perturbed_cfs: pd.DataFrame, preprocessing_bins: int=10) -> float:
         """
         Computes the robustness loss using Dice-Sørensen coefficient. Adopted from 
         https://doi.org/10.48550/arXiv.2407.00843
@@ -602,15 +780,15 @@ class DiceGenetic(ExplainerBase):
         Returns:
             float: Computed loss for robustness
         """
+        
 
-        if not isinstance(cfs, pd.DataFrame) or not isinstance(perturbed_cfs, pd.DataFrame):
+        """ if not isinstance(cfs, pd.DataFrame) or not isinstance(perturbed_cfs, pd.DataFrame):
             raise ValueError(f"Both `cfs` and `perturbed_cfs` must be of type pandas.DataFrame")
         
         if len(cfs) != len(perturbed_cfs):
-            raise ValueError(f"The number of rows in `cfs` doesn't match with the number of rows in `perturbed_cfs`")
-    
-        robustness_loss = 0.0
-        cfs_processed, perturbed_cfs_processed = self._preprocess_for_robustness(cfs, perturbed_cfs)
+            raise ValueError(f"The number of rows in `cfs` doesn't match with the number of rows in `perturbed_cfs`") """
+        
+        cfs_processed, perturbed_cfs_processed = self._preprocess_for_robustness(self.label_decode_cfs(cfs), perturbed_cfs, num_bins=preprocessing_bins)
 
         intersection = np.sum(np.minimum(cfs_processed, perturbed_cfs_processed), axis=1)
         union = np.sum(cfs_processed, axis=1) + np.sum(perturbed_cfs_processed, axis=1)
@@ -619,14 +797,6 @@ class DiceGenetic(ExplainerBase):
         sorensen_dice_coefficient[np.isnan(sorensen_dice_coefficient)] = 1.0
 
         return sorensen_dice_coefficient
-    
-        for c_i, c_i_prime in zip(cfs_processed, perturbed_cfs_processed):
-            intersection = np.sum(np.minimum(c_i, c_i_prime))
-            union = np.sum(c_i) + np.sum(c_i_prime)
-            sorensen_dice_coefficient = (2 * intersection) / union if union > 0 else 1.0
-            robustness_loss += sorensen_dice_coefficient
-
-        return robustness_loss / len(cfs)
 
     def compute_yloss(self, cfs, desired_range, desired_class):
         """Computes the first part (y-loss) of the loss function."""
@@ -671,16 +841,74 @@ class DiceGenetic(ExplainerBase):
         return sparsity_loss / len(
             self.data_interface.feature_names)  # Dividing by the number of features to normalize sparsity loss
 
-    def compute_loss(self, cfs, desired_range, desired_class, perturbation_method: str, **kwargs):
+    def generate_perturbations_simple(
+        self,
+        input_df: pd.DataFrame,
+        method: str = "gaussian",
+        std_dev: float = 0.20,
+        max_radius: float = 0.8,
+        cat_flip_prob: float = 0.25
+    ) -> pd.DataFrame:
+        """
+        Simple, direct perturbation generator for robustness evaluation.
+        Always returns perturbed versions (never falls back to originals).
+        """
+        rng = np.random.default_rng()
+        
+        cont_cols = self.data_interface.continuous_feature_names
+        cat_cols = self.data_interface.categorical_feature_names
+        ranges = self.data_interface.get_features_range_float()[1]
+        
+        perturbed_df = input_df.copy()
+        
+        # Perturb continuous features
+        if cont_cols:
+            cont_data = perturbed_df[cont_cols].to_numpy()
+            cont_lo = np.array([ranges[c][0] for c in cont_cols])
+            cont_hi = np.array([ranges[c][1] for c in cont_cols])
+            span = cont_hi - cont_lo
+            
+            if method == "gaussian":
+                noise = rng.normal(scale=std_dev * span, size=cont_data.shape)
+            elif method == "random":
+                noise = rng.uniform(-max_radius * span, max_radius * span, size=cont_data.shape)
+            elif method == "spherical":
+                direction = rng.normal(size=cont_data.shape)
+                norms = np.linalg.norm(direction, axis=1, keepdims=True)
+                norms = np.where(norms == 0, 1, norms)  # Avoid division by zero
+                direction /= norms
+                # Generate radius for each sample, matching span dimensions
+                radius = rng.uniform(0, 1, size=(len(direction), 1)) * max_radius * span
+                noise = direction * radius
+            else:
+                noise = rng.normal(scale=std_dev * span, size=cont_data.shape)
+            
+            perturbed_cont = np.clip(cont_data + noise, cont_lo, cont_hi)
+            perturbed_df[cont_cols] = perturbed_cont
+        
+        # Perturb categorical features
+        if cat_cols:
+            cat_ranges = self.data_interface.get_features_range()[1]
+            for col in cat_cols:
+                flip_mask = rng.random(len(perturbed_df)) < cat_flip_prob
+                n_flips = flip_mask.sum()
+                if n_flips > 0:
+                    choices = np.array(cat_ranges[col])
+                    new_values = rng.choice(choices, size=n_flips)
+                    perturbed_df.loc[flip_mask, col] = new_values
+        
+        return perturbed_df
+
+    def compute_loss(self, cfs, desired_range, desired_class, perturbation_method: str, preprocessing_bins=10, **kwargs):
         """Computes the overall loss"""
         input_instance = self.label_decode(cfs)
-        perturbed_cfs = self.generate_perturbations_hybrid(input_instance, perturbation_method, **kwargs)
+        perturbed_cfs = self.generate_perturbations_fast(input_instance, perturbation_method)
 
         self.yloss = self.compute_yloss(cfs, desired_range, desired_class)
         self.proximity_loss = self.compute_proximity_loss(cfs, self.query_instance_normalized) \
             if self.proximity_weight > 0 else np.zeros(len(cfs))
         self.sparsity_loss = self.compute_sparsity_loss(cfs) if self.sparsity_weight > 0 else np.zeros(len(cfs))
-        self.robustness_loss = self.compute_robustness_loss(input_instance, perturbed_cfs) if self.robustness_weight > 0 else np.zeros(len(cfs))
+        self.robustness_loss = self.compute_robustness_loss(cfs, perturbed_cfs, preprocessing_bins=preprocessing_bins) if self.robustness_weight > 0 else np.zeros(len(cfs))
         self.loss = np.reshape(np.array(self.yloss + (self.proximity_weight * self.proximity_loss) +
                                         self.sparsity_weight * self.sparsity_loss - 
                                         self.robustness_weight * self.robustness_loss), (-1, 1))
@@ -711,7 +939,7 @@ class DiceGenetic(ExplainerBase):
                 if feat_name in features_to_vary:
                     if feat_name in self.data_interface.continuous_feature_names:
                         one_init[j] = np.random.uniform(self.feature_range[feat_name][0],
-                                                        self.feature_range[feat_name][0])
+                                                        self.feature_range[feat_name][1])
                     else:
                         one_init[j] = np.random.choice(self.feature_range[feat_name])
                 else:
@@ -721,7 +949,8 @@ class DiceGenetic(ExplainerBase):
     def _reset_loss_history(self):
         self.loss_history = {key: [] for key in self.loss_history}
 
-    def _populate_loss_history(self, it, y_loss, sparsity_loss, proximity_loss, robustness_loss, total_loss):
+    def _populate_loss_history(self, it, y_loss, sparsity_loss,
+                               proximity_loss, robustness_loss, total_loss):
         self.loss_history["iterations"].append(it)
         self.loss_history["y_loss"].append(y_loss.mean())
         self.loss_history["sparsity_loss"].append(sparsity_loss.mean())
@@ -729,10 +958,11 @@ class DiceGenetic(ExplainerBase):
         self.loss_history["robustness_loss"].append(robustness_loss if type(self.robustness_loss) == float else robustness_loss.mean())
         self.loss_history["total_loss"].append(total_loss.mean())
 
-
-    def find_counterfactuals(self, query_instance, desired_range, desired_class, perturbation_method,
-                             features_to_vary, maxiterations, thresh, verbose, **kwargs):
+    def find_counterfactuals(self, query_instance, desired_range, desired_class,
+                             perturbation_method, features_to_vary, maxiterations,
+                             thresh, verbose, preprocessing_bins, **kwargs):
         """Finds counterfactuals by generating cfs through the genetic algorithm"""
+
         self._reset_loss_history()
         population = self.cfs.copy()
         iterations = 0
@@ -759,13 +989,17 @@ class DiceGenetic(ExplainerBase):
                 break
             previous_best_loss = current_best_loss
             population = np.unique(tuple(map(tuple, population)), axis=0)
-            population_fitness = self.compute_loss(population, desired_range, desired_class, perturbation_method, **kwargs)
+            population_fitness = self.compute_loss(population, desired_range, desired_class, 
+                                                   perturbation_method, preprocessing_bins, **kwargs)
 
             population_fitness = population_fitness[population_fitness[:, 1].argsort()]
             current_best_loss = population_fitness[0][1]
-            self._populate_loss_history(iterations, self.yloss, self.sparsity_loss, self.proximity_loss, self.robustness_loss, current_best_loss)
-            
-            to_pred = np.array([population[int(tup[0])] for tup in population_fitness[:self.total_CFs]])
+            self._populate_loss_history(
+                iterations, self.yloss, self.sparsity_loss,
+                self.proximity_loss, self.robustness_loss, current_best_loss)
+
+            to_pred = np.array([population[int(tup[0])]
+                                for tup in population_fitness[:self.total_CFs]])
 
             if self.total_CFs > 0:
                 if self.model.model_type == ModelTypes.Classifier:

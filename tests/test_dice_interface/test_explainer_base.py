@@ -29,7 +29,7 @@ class TestExplainerBaseBinaryClassification:
         custom_public_data_interface,
         sklearn_binary_classification_model_interface
     ):
-        exp = dice_ml_x.DiceX(
+        exp = dice_ml_x.Dice(
             custom_public_data_interface,
             sklearn_binary_classification_model_interface,
             method=method)
@@ -61,7 +61,7 @@ class TestExplainerBaseBinaryClassification:
             sample_custom_query_1, sample_counterfactual_example_dummy,
             custom_public_data_interface,
             sklearn_binary_classification_model_interface):
-        exp = dice_ml_x.DiceX(
+        exp = dice_ml_x.Dice(
             custom_public_data_interface,
             sklearn_binary_classification_model_interface,
             method=method)
@@ -94,7 +94,7 @@ class TestExplainerBaseBinaryClassification:
             sample_custom_query_10, sample_counterfactual_example_dummy,
             custom_public_data_interface,
             sklearn_binary_classification_model_interface):
-        exp = dice_ml_x.DiceX(
+        exp = dice_ml_x.Dice(
             custom_public_data_interface,
             sklearn_binary_classification_model_interface,
             method=method)
@@ -130,7 +130,7 @@ class TestExplainerBaseBinaryClassification:
             outcome_name='Outcome')
         model = _load_custom_testing_binary_model()
         m = dice_ml_x.Model(model=model, backend='sklearn')
-        exp = dice_ml_x.DiceX(d, m, method=method)
+        exp = dice_ml_x.Dice(d, m, method=method)
 
         exp._generate_counterfactuals(
             query_instance=sample_custom_query_1,
@@ -145,7 +145,7 @@ class TestExplainerBaseBinaryClassification:
             self, desired_class, method, sample_custom_query_1,
             custom_public_data_interface,
             sklearn_binary_classification_model_interface):
-        exp = dice_ml_x.DiceX(
+        exp = dice_ml_x.Dice(
             custom_public_data_interface,
             sklearn_binary_classification_model_interface,
             method=method)
@@ -165,7 +165,7 @@ class TestExplainerBaseBinaryClassification:
             self, desired_class, method, sample_custom_query_1,
             custom_public_data_interface,
             sklearn_binary_classification_model_interface):
-        exp = dice_ml_x.DiceX(
+        exp = dice_ml_x.Dice(
             custom_public_data_interface,
             sklearn_binary_classification_model_interface,
             method=method)
@@ -185,7 +185,7 @@ class TestExplainerBaseBinaryClassification:
             self, desired_class, method, sample_custom_query_1,
             custom_public_data_interface,
             sklearn_binary_classification_model_interface):
-        exp = dice_ml_x.DiceX(
+        exp = dice_ml_x.Dice(
             custom_public_data_interface,
             sklearn_binary_classification_model_interface,
             method=method)
@@ -207,7 +207,7 @@ class TestExplainerBaseBinaryClassification:
             self, desired_class, method, sample_custom_query_1,
             custom_public_data_interface,
             sklearn_binary_classification_model_interface):
-        exp = dice_ml_x.DiceX(
+        exp = dice_ml_x.Dice(
             custom_public_data_interface,
             sklearn_binary_classification_model_interface,
             method=method)
@@ -225,7 +225,7 @@ class TestExplainerBaseBinaryClassification:
             self, desired_class, method, sample_custom_query_5,
             custom_public_data_interface,
             sklearn_binary_classification_model_interface):
-        exp = dice_ml_x.DiceX(
+        exp = dice_ml_x.Dice(
             custom_public_data_interface,
             sklearn_binary_classification_model_interface,
             method=method)
@@ -240,7 +240,7 @@ class TestExplainerBaseBinaryClassification:
             self, desired_class, method, sample_custom_query_3,
             custom_public_data_interface,
             sklearn_binary_classification_model_interface):
-        exp = dice_ml_x.DiceX(
+        exp = dice_ml_x.Dice(
             custom_public_data_interface,
             sklearn_binary_classification_model_interface,
             method=method)
@@ -254,7 +254,7 @@ class TestExplainerBaseBinaryClassification:
             self, desired_class, method, sample_custom_query_2,
             custom_public_data_interface,
             sklearn_binary_classification_model_interface):
-        exp = dice_ml_x.DiceX(
+        exp = dice_ml_x.Dice(
             custom_public_data_interface,
             sklearn_binary_classification_model_interface,
             method=method)
@@ -293,7 +293,7 @@ class TestExplainerBaseBinaryClassification:
             self, desired_class, method, total_CFs, permitted_range, sample_custom_query_2,
             custom_public_data_interface,
             sklearn_binary_classification_model_interface):
-        exp = dice_ml_x.DiceX(
+        exp = dice_ml_x.Dice(
             custom_public_data_interface,
             sklearn_binary_classification_model_interface,
             method=method)
@@ -319,7 +319,7 @@ class TestExplainerBaseBinaryClassification:
             permitted_range, custom_public_data_interface, sklearn_binary_classification_model_interface):
         if method == 'genetic':
             pytest.skip('DiceGenetic explainer does not handle the total counterfactuals as zero')
-        exp = dice_ml_x.DiceX(
+        exp = dice_ml_x.Dice(
             custom_public_data_interface,
             sklearn_binary_classification_model_interface,
             method=method)
@@ -334,7 +334,7 @@ class TestExplainerBaseBinaryClassification:
             sample_custom_query_1, sample_counterfactual_example_dummy,
             custom_public_data_interface,
             sklearn_binary_classification_model_interface):
-        exp = dice_ml_x.DiceX(
+        exp = dice_ml_x.Dice(
             custom_public_data_interface,
             sklearn_binary_classification_model_interface,
             method=method)
@@ -359,7 +359,7 @@ class TestExplainerBaseMultiClassClassification:
             self, desired_class, method, sample_custom_query_1,
             custom_public_data_interface,
             sklearn_multiclass_classification_model_interface):
-        exp = dice_ml_x.DiceX(
+        exp = dice_ml_x.Dice(
             custom_public_data_interface,
             sklearn_multiclass_classification_model_interface,
             method=method)
@@ -377,7 +377,7 @@ class TestExplainerBaseMultiClassClassification:
             sample_custom_query_2,
             custom_public_data_interface,
             sklearn_multiclass_classification_model_interface):
-        exp = dice_ml_x.DiceX(
+        exp = dice_ml_x.Dice(
             custom_public_data_interface,
             sklearn_multiclass_classification_model_interface,
             method=method)
@@ -432,7 +432,7 @@ class TestExplainerBaseMultiClassClassification:
             self, desired_class, total_CFs, method, sample_custom_query_4,
             custom_public_data_interface,
             sklearn_multiclass_classification_model_interface):
-        exp = dice_ml_x.DiceX(
+        exp = dice_ml_x.Dice(
             custom_public_data_interface,
             sklearn_multiclass_classification_model_interface,
             method=method)
@@ -452,7 +452,7 @@ class TestExplainerBaseMultiClassClassification:
             permitted_range, custom_public_data_interface, sklearn_multiclass_classification_model_interface):
         if method == 'genetic':
             pytest.skip('DiceGenetic explainer does not handle the total counterfactuals as zero')
-        exp = dice_ml_x.DiceX(
+        exp = dice_ml_x.Dice(
             custom_public_data_interface,
             sklearn_multiclass_classification_model_interface,
             method=method)
@@ -466,7 +466,7 @@ class TestExplainerBaseMultiClassClassification:
             self, desired_class, method, sample_custom_query_1,
             custom_public_data_interface,
             sklearn_multiclass_classification_model_interface):
-        exp = dice_ml_x.DiceX(
+        exp = dice_ml_x.Dice(
             custom_public_data_interface,
             sklearn_multiclass_classification_model_interface,
             method=method)
@@ -514,7 +514,7 @@ class TestExplainerBaseRegression:
 
         d = dice_ml_x.Data(dataframe=dataset_train, continuous_features=feature_names, outcome_name='Outcome')
         m = dice_ml_x.Model(model=model, backend='sklearn', model_type='regressor')
-        exp = dice_ml_x.DiceX(d, m, method=method)
+        exp = dice_ml_x.Dice(d, m, method=method)
 
         cf_explanation = exp.generate_counterfactuals(
             query_instances=x_test.iloc[0:1],
@@ -552,7 +552,7 @@ class TestExplainerBaseUserConfigValidations:
             custom_public_data_interface,
             sklearn_binary_classification_model_interface,
             explainer_function):
-        exp = dice_ml_x.DiceX(
+        exp = dice_ml_x.Dice(
             custom_public_data_interface,
             sklearn_binary_classification_model_interface,
             method=method)
@@ -668,7 +668,7 @@ class TestExplainerBaseDataValidations:
             sample_custom_query_1,
             custom_public_data_interface,
             sklearn_binary_classification_model_interface):
-        exp = dice_ml_x.DiceX(
+        exp = dice_ml_x.Dice(
             custom_public_data_interface,
             sklearn_binary_classification_model_interface,
             method=method)
@@ -700,7 +700,7 @@ class TestExplainerBaseDataValidations:
             sample_custom_query_10,
             custom_public_data_interface,
             sklearn_binary_classification_model_interface):
-        exp = dice_ml_x.DiceX(
+        exp = dice_ml_x.Dice(
             custom_public_data_interface,
             sklearn_binary_classification_model_interface,
             method=method)
@@ -735,7 +735,7 @@ class TestExplainerBaseDataValidations:
         if method == 'genetic':
             pytest.skip('Skipping this test for genetic explainer')
 
-        exp = dice_ml_x.DiceX(
+        exp = dice_ml_x.Dice(
             custom_public_data_interface,
             sklearn_binary_classification_model_interface,
             method=method)
