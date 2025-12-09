@@ -570,12 +570,138 @@ def create_plots(results_csv: Path, output_dir: Path):
     logger.info(f"⚙️ Created 6 comprehensive plots in {output_dir}/")
 
 
+def compute_pareto_ranks(df, objectives):
+    """
+    Compute Pareto ranks using iterative fronts:
+    - Rank 1 = non-dominated (Pareto frontier)
+    - Rank 2 = dominated only by rank 1
+    - etc.
+
+    Args:
+        df: DataFrame with objective columns
+        objectives: dict mapping column names to 'maximize' or 'minimize'
+
+    Returns:
+        np.array of ranks (1-indexed)
+    """
+    # Prepare objectives matrix (convert all to maximization)
+    obj_matrix = np.zeros((len(df), len(objectives)))
+
+    for idx, (col, direction) in enumerate(objectives.items()):
+        if direction == 'minimize':
+            obj_matrix[:, idx] = -df[col].values  # negate to maximize
+        else:
+            obj_matrix[:, idx] = df[col].values
+
+    ranks = np.zeros(len(df), dtype=int)
+    remaining = list(range(len(df)))
+    current_rank = 1
+
+    while remaining:
+        # Find non-dominated solutions in remaining set
+        pareto_front = []
+        for i in remaining:
+            dominated = False
+            for j in remaining:
+                if i == j:
+                    continue
+                # Check if j dominates i (better or equal on all, strictly better on at least one)
+                if np.all(obj_matrix[j] >= obj_matrix[i]) and np.any(obj_matrix[j] > obj_matrix[i]):
+                    dominated = True
+                    break
+            if not dominated:
+                pareto_front.append(i)
+
+        # Assign rank to current front
+        for i in pareto_front:
+            ranks[i] = current_rank
+            remaining.remove(i)
+
+        current_rank += 1
+
+    return ranks
+
+
+def select_best_from_pareto(pareto_df, objectives):
+    """
+    From Pareto-optimal set, select solution closest to ideal point.
+
+    Ideal point defined as:
+    - validity = 1.0 (perfect validity)
+    - proximity = min observed (closest to query)
+    - diversity = max observed (most diverse)
+    - robustness = 1.0 (perfect robustness)
+
+    Args:
+        pareto_df: DataFrame containing only Pareto-optimal solutions
+        objectives: dict mapping column names to 'maximize' or 'minimize'
+
+    Returns:
+        Single row (Series) representing the best solution
+    """
+    if len(pareto_df) == 0:
+        return None
+
+    if len(pareto_df) == 1:
+        return pareto_df.iloc[0]
+
+    # Define ideal point for each objective
+    ideal = {}
+    for col, direction in objectives.items():
+        if col == 'validity_mean_mean':
+            ideal[col] = 1.0  # perfect validity
+        elif col == 'robustness_mean_mean':
+            ideal[col] = 1.0  # perfect robustness
+        elif direction == 'minimize':
+            ideal[col] = pareto_df[col].min()  # best observed value
+        else:  # maximize
+            ideal[col] = pareto_df[col].max()  # best observed value
+
+    # Compute normalized Euclidean distance to ideal point
+    distances = []
+    for _, row in pareto_df.iterrows():
+        dist_sq = 0
+        for col, direction in objectives.items():
+            # Get normalized objective value [0, 1]
+            min_val = pareto_df[col].min()
+            max_val = pareto_df[col].max()
+
+            if max_val == min_val:
+                obj_norm = 1.0
+            else:
+                obj_norm = (row[col] - min_val) / (max_val - min_val)
+
+            # Get normalized ideal value [0, 1]
+            if max_val == min_val:
+                ideal_norm = 1.0
+            else:
+                ideal_norm = (ideal[col] - min_val) / (max_val - min_val)
+
+            # For minimization objectives, invert the scale
+            if direction == 'minimize':
+                obj_norm = 1.0 - obj_norm
+                ideal_norm = 1.0 - ideal_norm
+
+            dist_sq += (obj_norm - ideal_norm) ** 2
+
+        distances.append(np.sqrt(dist_sq))
+
+    pareto_df = pareto_df.copy()
+    pareto_df['distance_to_ideal'] = distances
+
+    return pareto_df.loc[pareto_df['distance_to_ideal'].idxmin()]
+
+
 @task
 def create_summary_table(results_csv: Path, output_dir: Path):
-    """Create a comprehensive summary table - SEPARATE continuous and categorical."""
+    """
+    Create comprehensive summary table using Pareto dominance analysis.
+    NO arbitrary weights - uses multi-objective optimization principles.
+    """
+    logger = get_run_logger()
     df = pd.read_csv(results_csv)
 
-    # Group by bins and compute statistics for key metrics (SEPARATE)
+    # Group by bins and compute statistics for key metrics
     key_metrics = [
         'validity_mean',
         'proximity_cont_mean',
@@ -591,32 +717,276 @@ def create_summary_table(results_csv: Path, output_dir: Path):
     summary.columns = ['_'.join(col).strip() for col in summary.columns.values]
     summary = summary.reset_index()
 
-    # Add interpretation column
-    def interpret_bins(row):
-        if row['num_bins'] == 10:
-            return 'Recommended'
-        elif row['num_bins'] < 10:
-            return 'Under-discretized'
-        elif row['num_bins'] <= 15:
-            return 'Acceptable'
-        else:
-            return 'Over-discretized'
+    # ========== PARETO DOMINANCE ANALYSIS (NO ARBITRARY WEIGHTS) ==========
 
-    summary['interpretation'] = summary.apply(interpret_bins, axis=1)
+    # Define objectives for Pareto analysis
+    objectives = {
+        'validity_mean_mean': 'maximize',
+        'proximity_cont_mean_mean': 'minimize',  # lower is better
+        'diversity_cont_mean_mean': 'maximize',
+        'robustness_mean_mean': 'maximize',
+    }
 
-    # Save as CSV
+    logger.info("\n" + "="*80)
+    logger.info("PARETO DOMINANCE ANALYSIS")
+    logger.info("="*80)
+    logger.info("Objectives:")
+    for obj, direction in objectives.items():
+        logger.info(f"  - {obj}: {direction}")
+
+    # Compute Pareto ranks
+    summary['pareto_rank'] = compute_pareto_ranks(summary, objectives)
+
+    # Identify Pareto-optimal solutions (rank 1)
+    pareto_optimal = summary[summary['pareto_rank'] == 1].copy()
+    summary['is_pareto_optimal'] = summary['pareto_rank'] == 1
+
+    logger.info(f"\nFound {len(pareto_optimal)} Pareto-optimal configurations:")
+    for _, row in pareto_optimal.iterrows():
+        logger.info(f"  - {row['bin_label']:15s} ({int(row['num_bins']):2d} bins): "
+                   f"validity={row['validity_mean_mean']:.3f}, "
+                   f"proximity={row['proximity_cont_mean_mean']:.3f}, "
+                   f"diversity={row['diversity_cont_mean_mean']:.3f}, "
+                   f"robustness={row['robustness_mean_mean']:.3f}")
+
+    # Select best from Pareto frontier (closest to ideal point)
+    if len(pareto_optimal) > 0:
+        best_config = select_best_from_pareto(pareto_optimal, objectives)
+        summary['is_recommended'] = False
+        summary.loc[summary['num_bins'] == best_config['num_bins'], 'is_recommended'] = True
+
+        logger.info("\n" + "-"*80)
+        logger.info("RECOMMENDED CONFIGURATION (minimum distance to ideal point):")
+        logger.info("-"*80)
+        logger.info(f"Configuration: {best_config['bin_label']} ({int(best_config['num_bins'])} bins)")
+        logger.info(f"  Validity:   {best_config['validity_mean_mean']:.3f} ± {best_config['validity_mean_std']:.3f}")
+        logger.info(f"  Proximity:  {best_config['proximity_cont_mean_mean']:.3f}")
+        logger.info(f"  Diversity:  {best_config['diversity_cont_mean_mean']:.3f}")
+        logger.info(f"  Robustness: {best_config['robustness_mean_mean']:.3f} ± {best_config['robustness_mean_std']:.3f}")
+        logger.info(f"  Time:       {best_config['generation_time_mean_mean']:.1f}s")
+        if 'distance_to_ideal' in best_config:
+            logger.info(f"  Distance to ideal: {best_config['distance_to_ideal']:.3f}")
+    else:
+        logger.warning("No Pareto-optimal solutions found!")
+        summary['is_recommended'] = False
+
+    # ========== ADDITIONAL ANALYSIS ==========
+
+    # Compute relative performance vs baseline (10 bins) if it exists
+    baseline_10 = summary[summary['num_bins'] == 10]
+    if len(baseline_10) > 0:
+        baseline = baseline_10.iloc[0]
+
+        for col in ['validity_mean_mean', 'proximity_cont_mean_mean', 
+                    'diversity_cont_mean_mean', 'robustness_mean_mean', 
+                    'generation_time_mean_mean']:
+            if baseline[col] != 0:
+                summary[f'{col}_pct_change'] = ((summary[col] - baseline[col]) / abs(baseline[col])) * 100
+            else:
+                summary[f'{col}_pct_change'] = 0.0
+
+    # Create interpretation column
+    def interpret_config(row):
+        interpretations = []
+
+        if row['is_recommended']:
+            interpretations.append("✓ RECOMMENDED")
+        elif row['is_pareto_optimal']:
+            interpretations.append("Pareto-optimal")
+
+        if row['pareto_rank'] <= 2:
+            interpretations.append(f"Rank {int(row['pareto_rank'])}")
+
+        if row['validity_mean_mean'] < 0.95:
+            interpretations.append("Low validity (<95%)")
+
+        if row['robustness_mean_mean'] < 0.5:
+            interpretations.append("Low robustness (<50%)")
+
+        # Check if significantly slower than median
+        median_time = summary['generation_time_mean_mean'].median()
+        if row['generation_time_mean_mean'] > median_time * 1.5:
+            interpretations.append("Slow (>1.5× median)")
+
+        if not interpretations:
+            interpretations.append("Acceptable")
+
+        return "; ".join(interpretations)
+
+    summary['interpretation'] = summary.apply(interpret_config, axis=1)
+
+    # ========== SAVE RESULTS ==========
+
+    # Sort by Pareto rank (best first), then by robustness
+    summary = summary.sort_values(['pareto_rank', 'robustness_mean_mean'],
+                                   ascending=[True, False])
+
+    # Save comprehensive CSV
     summary_csv = output_dir / 'binning_summary_table.csv'
     summary.to_csv(summary_csv, index=False)
+    logger.info(f"\n✓ Saved comprehensive summary: {summary_csv}")
 
-    # Also save as LaTeX
+    # Save simplified LaTeX table
+    latex_cols = [
+        'num_bins', 'bin_label',
+        'validity_mean_mean',
+        'proximity_cont_mean_mean',
+        'diversity_cont_mean_mean',
+        'robustness_mean_mean',
+        'generation_time_mean_mean',
+        'pareto_rank',
+        'interpretation'
+    ]
+
+    latex_summary = summary[latex_cols].copy()
+    latex_summary.columns = [
+        'Bins', 'Method', 'Validity', 'Proximity', 'Diversity', 
+        'Robustness', 'Time (s)', 'Rank', 'Interpretation'
+    ]
+
     latex_file = output_dir / 'binning_summary_table.tex'
     with open(latex_file, 'w') as f:
-        f.write(summary.to_latex(index=False, float_format='%.3f'))
+        f.write(latex_summary.to_latex(
+            index=False, 
+            float_format='%.3f',
+            escape=False,
+            column_format='c' * len(latex_cols)
+        ))
 
-    logger = get_run_logger()
-    logger.info(f"⚙️ Created summary table: {summary_csv}")
+    logger.info(f"⚙️ Saved LaTeX table: {latex_file}")
 
     return summary_csv
+
+
+# ============================================================================
+# ALSO ADD this new task for detailed recommendation report:
+# ============================================================================
+
+@task
+def create_recommendation_report(results_csv: Path, summary_csv: Path, output_dir: Path):
+    """
+    Create detailed recommendation report for thesis.
+    This explains the Pareto analysis and justifies the choice.
+    """
+    logger = get_run_logger()
+
+    df = pd.read_csv(results_csv)
+    summary = pd.read_csv(summary_csv)
+
+    # Get recommended configuration
+    recommended = summary[summary.get('is_recommended', False)]
+    if len(recommended) == 0:
+        logger.warning("No recommended configuration found in summary table!")
+        return None
+
+    recommended = recommended.iloc[0]
+
+    # Get all Pareto-optimal configs
+    pareto = summary[summary.get('is_pareto_optimal', False)]
+
+    # Get baseline (10 bins) if exists
+    baseline = summary[summary['num_bins'] == 10]
+    baseline = baseline.iloc[0] if len(baseline) > 0 else None
+
+    # ========== BUILD REPORT ==========
+
+    report = []
+    report.append("="*80)
+    report.append("BINNING SENSITIVITY ANALYSIS - RECOMMENDATION REPORT")
+    report.append("="*80)
+    report.append("")
+    report.append("METHODOLOGY:")
+    report.append("-" * 80)
+    report.append("This analysis uses Pareto dominance (Deb et al., 2002) to identify")
+    report.append("configurations where no alternative simultaneously improves all objectives.")
+    report.append("No arbitrary preference weights are imposed.")
+    report.append("")
+    report.append("Objectives:")
+    report.append("  1. Maximize validity (CFs must satisfy target class)")
+    report.append("  2. Minimize proximity (CFs should be close to query)")
+    report.append("  3. Maximize diversity (CFs should explore solution space)")
+    report.append("  4. Maximize robustness (CFs should be stable under perturbation)")
+    report.append("")
+
+    report.append("PARETO-OPTIMAL CONFIGURATIONS:")
+    report.append("-" * 80)
+    report.append(f"Found {len(pareto)} non-dominated solutions:\n")
+
+    for _, row in pareto.iterrows():
+        report.append(f"  {row['bin_label']:15s} ({int(row['num_bins']):2d} bins)")
+        report.append(f"    Validity:   {row['validity_mean_mean']:.3f} ± {row['validity_mean_std']:.3f}")
+        report.append(f"    Proximity:  {row['proximity_cont_mean_mean']:.3f}")
+        report.append(f"    Diversity:  {row['diversity_cont_mean_mean']:.3f}")
+        report.append(f"    Robustness: {row['robustness_mean_mean']:.3f} ± {row['robustness_mean_std']:.3f}")
+        report.append(f"    Time:       {row['generation_time_mean_mean']:.1f}s")
+        report.append("")
+
+    report.append("RECOMMENDED CONFIGURATION:")
+    report.append("-" * 80)
+    report.append(f"Configuration: {recommended['bin_label']} ({int(recommended['num_bins'])} bins)")
+    report.append("")
+    report.append("Selection criteria: Minimum distance to ideal point")
+    report.append("  (validity=1.0, proximity=min, diversity=max, robustness=1.0)")
+    report.append("")
+    report.append("Performance:")
+    report.append(f"  Validity:   {recommended['validity_mean_mean']:.3f} ± {recommended['validity_mean_std']:.3f}")
+    report.append(f"  Proximity:  {recommended['proximity_cont_mean_mean']:.3f}")
+    report.append(f"  Diversity:  {recommended['diversity_cont_mean_mean']:.3f}")
+    report.append(f"  Robustness: {recommended['robustness_mean_mean']:.3f} ± {recommended['robustness_mean_std']:.3f}")
+    report.append(f"  Time:       {recommended['generation_time_mean_mean']:.1f}s")
+    report.append("")
+
+    if baseline is not None and int(baseline['num_bins']) != int(recommended['num_bins']):
+        report.append("COMPARISON TO BASELINE (10 bins):")
+        report.append("-" * 80)
+
+        def pct_change(new, old):
+            if old == 0:
+                return 0.0
+            return ((new - old) / abs(old)) * 100
+
+        val_change = pct_change(recommended['validity_mean_mean'], baseline['validity_mean_mean'])
+        prox_change = pct_change(recommended['proximity_cont_mean_mean'], baseline['proximity_cont_mean_mean'])
+        div_change = pct_change(recommended['diversity_cont_mean_mean'], baseline['diversity_cont_mean_mean'])
+        rob_change = pct_change(recommended['robustness_mean_mean'], baseline['robustness_mean_mean'])
+        time_change = pct_change(recommended['generation_time_mean_mean'], baseline['generation_time_mean_mean'])
+
+        report.append(f"  Validity:   {val_change:+.1f}%")
+        report.append(f"  Proximity:  {prox_change:+.1f}% {'(better)' if prox_change < 0 else '(worse)'}")
+        report.append(f"  Diversity:  {div_change:+.1f}%")
+        report.append(f"  Robustness: {rob_change:+.1f}%")
+        report.append(f"  Time:       {time_change:+.1f}%")
+        report.append("")
+
+    report.append("JUSTIFICATION:")
+    report.append("-" * 80)
+    report.append(f"The {int(recommended['num_bins'])}-bin configuration is recommended because:")
+    report.append("  1. It is Pareto-optimal (non-dominated)")
+    report.append("  2. It achieves the minimum distance to the ideal point")
+    report.append(f"  3. Validity: {recommended['validity_mean_mean']:.1%} (target: ≥95%)")
+    report.append(f"  4. Robustness: {recommended['robustness_mean_mean']:.1%} (primary contribution)")
+
+    if int(recommended['num_bins']) == 10:
+        report.append("  5. Aligns with Sturges' rule and prior CF literature")
+
+    report.append("")
+    report.append("="*80)
+
+    # Write to file
+    report_file = output_dir / 'binning_recommendation_report.txt'
+    with open(report_file, 'w') as f:
+        f.write('\n'.join(report))
+
+    logger.info(f"⚙️ Created recommendation report: {report_file}")
+
+    # Also print key findings to console
+    logger.info("\n" + "="*80)
+    logger.info("KEY FINDINGS:")
+    logger.info("="*80)
+    for line in report[-15:]:  # Print last 15 lines (justification section)
+        logger.info(line)
+
+    return report_file
 
 
 @flow(name="Binning Sensitivity Analysis")
@@ -630,34 +1000,34 @@ def binning_sensitivity_flow(
     """
     logger = get_run_logger()
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Load resources
     logger.info("Loading datasets and DiCE-Extended models...")
     datasets = load_datasets()
     dice_x_models = load_dice_x_models.fn(DefaultPaths.dice_x_pickle)    # type: ignore
-    
+
     # Filter to test datasets
     datasets = [d for d in datasets if d[2] in config.test_datasets]
-    
+
     # Compute adaptive bins
     logger.info("\n=== Computing Adaptive Bin Counts ===")
     adaptive_bins = {}
-    
+
     for df, target, ds_name in datasets:
         cont_features = df.select_dtypes(include=[np.number]).columns.difference([target]).tolist()
-        
+
         sturges = compute_adaptive_bins(df, cont_features, BinningMethod.STURGES)
         scott = compute_adaptive_bins(df, cont_features, BinningMethod.SCOTT)
         fd = compute_adaptive_bins(df, cont_features, BinningMethod.FREEDMAN_DIACONIS)
-        
+
         adaptive_bins[ds_name] = {
             'sturges': sturges,
             'scott': scott,
             'fd': fd,
         }
-        
+
         logger.info(f"{ds_name}: Sturges={sturges}, Scott={scott}, FD={fd}")
-    
+
     # Save adaptive bins info
     adaptive_df = pd.DataFrame([
         {'dataset': ds, 'method': method, 'num_bins': bins}
@@ -665,19 +1035,19 @@ def binning_sensitivity_flow(
         for method, bins in methods.items()
     ])
     adaptive_df.to_csv(output_dir / 'adaptive_bins_computed.csv', index=False)
-    
+
     # Run experiments
     logger.info("\n=== Running Binning Experiments ===")
     logger.info(f"Metrics (SEPARATE): validity, proximity_cont, proximity_cat, diversity_cont, diversity_cat, sparsity_cont, robustness, fidelity, time")
     logger.info(f"Testing {len(config.test_backends)} backends: {config.test_backends}")
     logger.info(f"Testing {len(datasets)} datasets: {[d[2] for d in datasets]}")
-    
+
     total_configs = len(datasets) * len(config.test_backends) * (len(config.fixed_bins) + 3)
     logger.info(f"Total configurations: {total_configs}")
-    
+
     results = []
     completed = 0
-    
+
     for df, target, ds_name in datasets:
         for backend in config.test_backends:
             # Test fixed bins
@@ -690,7 +1060,7 @@ def binning_sensitivity_flow(
                     results.append(result)
                 completed += 1
                 logger.info(f"Progress: {completed}/{total_configs} ({100*completed/total_configs:.1f}%)")
-            
+
             # Test adaptive bins
             for method_name, num_bins in adaptive_bins[ds_name].items():
                 result = evaluate_with_bins(
@@ -701,28 +1071,25 @@ def binning_sensitivity_flow(
                     results.append(result)
                 completed += 1
                 logger.info(f"Progress: {completed}/{total_configs} ({100*completed/total_configs:.1f}%)")
-    
-    # Save and visualize
+
     if results:
         csv_file = save_results(results, output_dir)
-        logger.info(f"\n✓ Saved results to {csv_file}")
+        logger.info(f"\n🚀 Saved results to {csv_file}")
         plot_path: Path = output_dir / "chart_artefacts"
         plot_path.mkdir(parents=True, exist_ok=True)
         create_plots(csv_file, plot_path)
-        create_summary_table(csv_file, output_dir)
 
-        # Print final summary
-        logger.info("\n" + "="*60)
-        logger.info("=== BINNING SENSITIVITY ANALYSIS COMPLETE ===")
-        logger.info("="*60)
-        logger.info(f"\nResults saved to: {output_dir}/")
-        logger.info("  - Main results: binning_sensitivity_results.csv")
-        logger.info("    (proximity_cont, proximity_cat, diversity_cont, diversity_cat SEPARATE)")
-        logger.info("  - Per-dataset CSVs: binning_<dataset>.csv")
-        logger.info("  - Per-backend CSVs: binning_<backend>.csv")
-        logger.info("  - Summary table: binning_summary_table.csv")
-        logger.info("  - 6 comprehensive plots (*.pdf and *.png)")
-        
+        # NEW ORDER: Create summary first, then report uses it
+        summary_csv = create_summary_table(csv_file, output_dir)
+        recommendation_report = create_recommendation_report(csv_file, summary_csv, output_dir)
+
+        logger.info("\n" + "="*80)
+        logger.info("ANALYSIS COMPLETE")
+        logger.info("="*80)
+        logger.info(f"Results:        {csv_file}")
+        logger.info(f"Summary:        {summary_csv}")
+        logger.info(f"Recommendation: {recommendation_report}")
+        logger.info(f"Plots:          {output_dir}/binning_*.pdf")        
         return csv_file
     else:
         logger.error("No results generated!")
