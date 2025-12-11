@@ -35,6 +35,14 @@ from experiments.grid_search_experiment import (
     make_dice_objects
 )
 
+from experiments.memory_management import (
+    MemoryMonitor,
+    memory_checkpoint,
+    clear_session_memory,
+    log_memory_usage,
+    setup_memory_logging
+)
+
 
 class BinningMethod(Enum):
     STURGES = 'sturges'
@@ -100,6 +108,15 @@ class BinningTestConfig:
     n_repeat: int = 50
     fidelity_radii: list = field(default_factory=lambda: [0.5, 1.0, 2.0])
     n_samples_fidelity: int = 1000
+    # Memory management settings
+    enable_memory_monitoring: bool = True
+    memory_cleanup_threshold_percent: float = 75.0
+    memory_cleanup_after_backend: bool = True
+    memory_checkpoint_interval: int = 5  # Log memory every N test points
+    # Checkpoint settings for fault tolerance
+    enable_checkpointing: bool = True
+    checkpoint_every_n_configs: int = 5  # Save after every N configurations
+    resume_from_checkpoint: bool = True  # Auto-resume if checkpoint exists
 
 
 @dataclass
@@ -116,6 +133,19 @@ def evaluate_with_bins(
 ):
     """Generate CFs and compute ALL metrics (SEPARATE continuous and categorical)."""
     logger = get_run_logger()
+
+    # Memory monitoring setup
+    monitor_name = f"{ds_name}/{backend}/bins={num_bins}"
+    mem_monitor = None
+    if config.enable_memory_monitoring:
+        mem_monitor = MemoryMonitor(
+            name=monitor_name,
+            threshold_percent=config.memory_cleanup_threshold_percent,
+            auto_cleanup=True,
+            check_interval=config.memory_checkpoint_interval,
+            backend=backend
+        )
+        mem_monitor.__enter__()
 
     # Split data
     y = df[target]
@@ -155,6 +185,10 @@ def evaluate_with_bins(
     for idx in range(len(test_subset)):
         x_query = test_subset.iloc[idx:idx+1].drop(columns=[target])
         x_full = test_subset.iloc[idx:idx+1]
+        
+        # Memory checkpoint
+        if mem_monitor:
+            mem_monitor.checkpoint(f"test_point_{idx}")
 
         try:
             start = time.time()
@@ -257,8 +291,66 @@ def evaluate_with_bins(
                 f"div_cat={result['diversity_cat_mean']:.3f}, "
                 f"robust={result['robustness_mean']:.3f}, "
                 f"time={result['generation_time_mean']:.1f}s")
+    
+    # Cleanup and close monitor
+    if mem_monitor:
+        mem_monitor.__exit__(None, None, None)
+    
+    if config.memory_cleanup_after_backend:
+        clear_session_memory(backend=backend)
 
     return result
+
+
+def load_checkpoint(output_dir: Path) -> tuple[list, set]:
+    """
+    Load existing checkpoint if it exists.
+    
+    Returns:
+        tuple: (list of results, set of completed config keys)
+    """
+    checkpoint_file = output_dir / 'checkpoint_results.csv'
+    
+    if not checkpoint_file.exists():
+        return [], set()
+    
+    try:
+        df = pd.read_csv(checkpoint_file)
+        results = df.to_dict('records')
+        
+        # Create unique keys for completed configurations
+        completed = set()
+        for r in results:
+            key = f"{r['dataset']}|{r['backend']}|{r['num_bins']}"
+            completed.add(key)
+        
+        return results, completed
+    except Exception as e:
+        print(f"Warning: Could not load checkpoint: {e}")
+        return [], set()
+
+
+def save_checkpoint(results: list, output_dir: Path):
+    """
+    Save current results to checkpoint file.
+    
+    Args:
+        results: List of result dictionaries
+        output_dir: Output directory
+    """
+    if not results:
+        return
+    
+    checkpoint_file = output_dir / 'checkpoint_results.csv'
+    df = pd.DataFrame(results)
+    df.to_csv(checkpoint_file, index=False)
+    
+    # Also save timestamp
+    timestamp_file = output_dir / 'checkpoint_timestamp.txt'
+    with open(timestamp_file, 'w') as f:
+        import datetime
+        f.write(f"Last checkpoint: {datetime.datetime.now()}\n")
+        f.write(f"Total results: {len(results)}\n")
 
 
 @task
@@ -1000,6 +1092,11 @@ def binning_sensitivity_flow(
     """
     logger = get_run_logger()
     output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Setup memory logging
+    if config.enable_memory_monitoring:
+        setup_memory_logging()
+        log_memory_usage("Flow started")
 
     # Load resources
     logger.info("Loading datasets and DiCE-Extended models...")
@@ -1036,6 +1133,19 @@ def binning_sensitivity_flow(
     ])
     adaptive_df.to_csv(output_dir / 'adaptive_bins_computed.csv', index=False)
 
+    # Load checkpoint if resuming
+    results = []
+    completed_configs = set()
+    
+    if config.enable_checkpointing and config.resume_from_checkpoint:
+        logger.info("\n=== Checking for Existing Checkpoint ===")
+        results, completed_configs = load_checkpoint(output_dir)
+        if results:
+            logger.info(f"✓ Loaded {len(results)} results from checkpoint")
+            logger.info(f"✓ Resuming from {len(completed_configs)} completed configurations")
+        else:
+            logger.info("No checkpoint found, starting fresh")
+
     # Run experiments
     logger.info("\n=== Running Binning Experiments ===")
     logger.info(f"Metrics (SEPARATE): validity, proximity_cont, proximity_cat, diversity_cont, diversity_cat, sparsity_cont, robustness, fidelity, time")
@@ -1044,35 +1154,79 @@ def binning_sensitivity_flow(
 
     total_configs = len(datasets) * len(config.test_backends) * (len(config.fixed_bins) + 3)
     logger.info(f"Total configurations: {total_configs}")
+    logger.info(f"Already completed: {len(completed_configs)}")
+    logger.info(f"Remaining: {total_configs - len(completed_configs)}")
 
-    results = []
-    completed = 0
+    completed = len(results)
+    configs_since_checkpoint = 0
 
     for df, target, ds_name in datasets:
         for backend in config.test_backends:
+            if config.enable_memory_monitoring:
+                log_memory_usage(f"Starting {ds_name}/{backend}")
+            
             # Test fixed bins
             for num_bins in config.fixed_bins:
+                config_key = f"{ds_name}|{backend}|{num_bins}"
+                
+                # Skip if already completed
+                if config_key in completed_configs:
+                    logger.info(f"⏭️  Skipping {ds_name}/{backend}/bins={num_bins} (already completed)")
+                    completed += 1
+                    continue
+                
                 result = evaluate_with_bins(
                     df, target, ds_name, backend, num_bins,
                     f"fixed_{num_bins}", config, dice_x_models
                 )
                 if result:
                     results.append(result)
+                    completed_configs.add(config_key)
+                    configs_since_checkpoint += 1
+                
                 completed += 1
                 logger.info(f"Progress: {completed}/{total_configs} ({100*completed/total_configs:.1f}%)")
+                
+                # Checkpoint if needed
+                if config.enable_checkpointing and configs_since_checkpoint >= config.checkpoint_every_n_configs:
+                    logger.info(f"💾 Saving checkpoint ({len(results)} results)...")
+                    save_checkpoint(results, output_dir)
+                    configs_since_checkpoint = 0
 
             # Test adaptive bins
             for method_name, num_bins in adaptive_bins[ds_name].items():
+                config_key = f"{ds_name}|{backend}|{num_bins}"
+                
+                # Skip if already completed
+                if config_key in completed_configs:
+                    logger.info(f"⏭️  Skipping {ds_name}/{backend}/{method_name} (already completed)")
+                    completed += 1
+                    continue
+                
                 result = evaluate_with_bins(
                     df, target, ds_name, backend, num_bins,
                     method_name, config, dice_x_models
                 )
                 if result:
                     results.append(result)
+                    completed_configs.add(config_key)
+                    configs_since_checkpoint += 1
+                
                 completed += 1
                 logger.info(f"Progress: {completed}/{total_configs} ({100*completed/total_configs:.1f}%)")
+                
+                # Checkpoint if needed
+                if config.enable_checkpointing and configs_since_checkpoint >= config.checkpoint_every_n_configs:
+                    logger.info(f"💾 Saving checkpoint ({len(results)} results)...")
+                    save_checkpoint(results, output_dir)
+                    configs_since_checkpoint = 0
 
     if results:
+        # Final checkpoint save
+        if config.enable_checkpointing:
+            logger.info("💾 Saving final checkpoint...")
+            save_checkpoint(results, output_dir)
+        
         csv_file = save_results(results, output_dir)
         logger.info(f"\n🚀 Saved results to {csv_file}")
         plot_path: Path = output_dir / "chart_artefacts"
@@ -1089,7 +1243,23 @@ def binning_sensitivity_flow(
         logger.info(f"Results:        {csv_file}")
         logger.info(f"Summary:        {summary_csv}")
         logger.info(f"Recommendation: {recommendation_report}")
-        logger.info(f"Plots:          {output_dir}/binning_*.pdf")        
+        logger.info(f"Plots:          {output_dir}/binning_*.pdf")
+        
+        if config.enable_memory_monitoring:
+            log_memory_usage("Flow completed - final cleanup")
+            clear_session_memory(backend=None, aggressive=True)
+        
+        # Clean up checkpoint files after successful completion
+        if config.enable_checkpointing:
+            checkpoint_file = output_dir / 'checkpoint_results.csv'
+            timestamp_file = output_dir / 'checkpoint_timestamp.txt'
+            
+            if checkpoint_file.exists():
+                checkpoint_file.rename(output_dir / 'checkpoint_results_completed.csv')
+                logger.info("✓ Archived checkpoint file (experiment completed successfully)")
+            if timestamp_file.exists():
+                timestamp_file.unlink()
+        
         return csv_file
     else:
         logger.error("No results generated!")
@@ -1099,9 +1269,9 @@ def binning_sensitivity_flow(
 if __name__ == "__main__":
     # Quick test first
     config = BinningTestConfig(
-        n_test_points=10,
+        n_test_points=50,
         fixed_bins=[5, 10, 15, 20],
-        test_datasets=['adult-income', 'german-credit', 'lending-club', 'compas'],
+        test_datasets=['adult-income', 'german-credit', 'lending-club', 'compas-recidivism'],
         test_backends=['sklearn', 'PYT', 'TF2'],
     )
 
