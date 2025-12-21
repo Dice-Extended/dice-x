@@ -1,8 +1,0 @@
-num_bins,bin_label,validity_mean_mean,validity_mean_std,proximity_cont_mean_mean,proximity_cont_mean_std,proximity_cat_mean_mean,proximity_cat_mean_std,diversity_cont_mean_mean,diversity_cont_mean_std,diversity_cat_mean_mean,diversity_cat_mean_std,sparsity_cont_mean_mean,sparsity_cont_mean_std,robustness_mean_mean,robustness_mean_std,generation_time_mean_mean,generation_time_mean_std,interpretation
-5,fixed_5,1.0,,-1.188,,0.373,,9.762,,0.497,,0.06,,0.927,,7.324,,Under-discretized
-10,fixed_10,1.0,,-1.166,,0.353,,9.68,,0.523,,0.12,,0.928,,7.604,,Recommended
-15,fixed_15,1.0,,-1.177,,0.367,,9.752,,0.537,,0.13,,0.928,,7.993,,Acceptable
-16,sturges,1.0,,-1.197,,0.37,,9.811,,0.53,,0.13,,0.924,,6.943,,Over-discretized
-20,fixed_20,1.0,,-1.19,,0.387,,9.834,,0.483,,0.1,,0.92,,7.689,,Over-discretized
-73,scott,1.0,,-1.179,,0.363,,9.763,,0.495,,0.12,,0.927,,7.314,,Over-discretized
-313,fd,1.0,,-1.182,,0.36,,9.8,,0.53,,0.12,,0.925,,7.886,,Over-discretized

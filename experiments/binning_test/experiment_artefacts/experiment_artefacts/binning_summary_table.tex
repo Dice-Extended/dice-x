@@ -1,0 +1,22 @@
+\begin{tabular}{ccccccccc}
+\toprule
+ Bins &   Method &  Validity &  Proximity &  Diversity &  Robustness &  Time (s) &  Rank &                              Interpretation \\
+\midrule
+   11 &  sturges &     1.000 &     -0.276 &      1.774 &       0.879 &    32.314 &     1 &                      Pareto-optimal; Rank 1 \\
+   19 &    scott &     1.000 &     -0.285 &      1.810 &       0.875 &    33.438 &     1 &                      Pareto-optimal; Rank 1 \\
+   38 &    scott &     0.955 &     -0.725 &      3.406 &       0.875 &    79.348 &     1 & Pareto-optimal; Rank 1; Slow (>1.5× median) \\
+   65 &       fd &     0.957 &     -0.723 &      3.366 &       0.874 &    80.059 &     1 & Pareto-optimal; Rank 1; Slow (>1.5× median) \\
+   14 &  sturges &     0.960 &     -0.708 &      3.378 &       0.871 &    63.535 &     1 &                      Pareto-optimal; Rank 1 \\
+   16 &  sturges &     1.000 &     -0.605 &      4.832 &       0.862 &    22.119 &     1 &                      Pareto-optimal; Rank 1 \\
+  313 &       fd &     1.000 &     -0.617 &      4.832 &       0.860 &    24.363 &     1 &                      Pareto-optimal; Rank 1 \\
+   73 &    scott &     1.000 &     -0.628 &      4.937 &       0.857 &    23.361 &     1 &                       ✓ RECOMMENDED; Rank 1 \\
+   15 & fixed_15 &     0.989 &     -0.766 &      4.536 &       0.801 &    49.145 &     1 &                      Pareto-optimal; Rank 1 \\
+   10 & fixed_10 &     0.988 &     -0.761 &      4.558 &       0.800 &    44.332 &     1 &                      Pareto-optimal; Rank 1 \\
+   20 & fixed_20 &     0.987 &     -0.785 &      4.522 &       0.800 &    50.412 &     1 &                      Pareto-optimal; Rank 1 \\
+   17 &  sturges &     0.992 &     -1.573 &      8.484 &       0.595 &    74.193 &     1 & Pareto-optimal; Rank 1; Slow (>1.5× median) \\
+ 2442 &       fd &     0.995 &     -1.473 &      7.975 &       0.592 &    74.542 &     1 & Pareto-optimal; Rank 1; Slow (>1.5× median) \\
+   35 &       fd &     1.000 &     -0.276 &      1.803 &       0.875 &    35.598 &     2 &                                      Rank 2 \\
+    5 &  fixed_5 &     0.988 &     -0.696 &      4.280 &       0.798 &    41.176 &     2 &                                      Rank 2 \\
+  917 &    scott &     0.992 &     -1.510 &      8.375 &       0.591 &    79.252 &     2 &                 Rank 2; Slow (>1.5× median) \\
+\bottomrule
+\end{tabular}

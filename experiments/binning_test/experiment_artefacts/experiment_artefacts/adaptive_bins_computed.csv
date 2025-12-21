@@ -1,0 +1,13 @@
+dataset,method,num_bins
+compas-recidivism,sturges,14
+compas-recidivism,scott,38
+compas-recidivism,fd,65
+adult-income,sturges,16
+adult-income,scott,73
+adult-income,fd,313
+lending-club,sturges,17
+lending-club,scott,917
+lending-club,fd,2442
+german-credit,sturges,11
+german-credit,scott,19
+german-credit,fd,35

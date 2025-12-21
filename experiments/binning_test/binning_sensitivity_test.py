@@ -932,7 +932,7 @@ def create_summary_table(results_csv: Path, output_dir: Path):
 
     latex_summary = summary[latex_cols].copy()
     latex_summary.columns = [
-        'Bins', 'Method', 'Validity', 'Proximity', 'Diversity', 
+        'Bins', 'Method', 'Validity', 'Proximity', 'Diversity',
         'Robustness', 'Time (s)', 'Rank', 'Interpretation'
     ]
 

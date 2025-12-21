@@ -1,0 +1,142 @@
+================================================================================
+BINNING SENSITIVITY ANALYSIS - RECOMMENDATION REPORT
+================================================================================
+
+METHODOLOGY:
+--------------------------------------------------------------------------------
+This analysis uses Pareto dominance (Deb et al., 2002) to identify
+configurations where no alternative simultaneously improves all objectives.
+No arbitrary preference weights are imposed.
+
+Objectives:
+  1. Maximize validity (CFs must satisfy target class)
+  2. Minimize proximity (CFs should be close to query)
+  3. Maximize diversity (CFs should explore solution space)
+  4. Maximize robustness (CFs should be stable under perturbation)
+
+PARETO-OPTIMAL CONFIGURATIONS:
+--------------------------------------------------------------------------------
+Found 13 non-dominated solutions:
+
+  sturges         (11 bins)
+    Validity:   1.000 ± 0.000
+    Proximity:  -0.276
+    Diversity:  1.774
+    Robustness: 0.879 ± 0.110
+    Time:       32.3s
+
+  scott           (19 bins)
+    Validity:   1.000 ± 0.000
+    Proximity:  -0.285
+    Diversity:  1.810
+    Robustness: 0.875 ± 0.118
+    Time:       33.4s
+
+  scott           (38 bins)
+    Validity:   0.955 ± 0.079
+    Proximity:  -0.725
+    Diversity:  3.406
+    Robustness: 0.875 ± 0.055
+    Time:       79.3s
+
+  fd              (65 bins)
+    Validity:   0.957 ± 0.074
+    Proximity:  -0.723
+    Diversity:  3.366
+    Robustness: 0.874 ± 0.063
+    Time:       80.1s
+
+  sturges         (14 bins)
+    Validity:   0.960 ± 0.069
+    Proximity:  -0.708
+    Diversity:  3.378
+    Robustness: 0.871 ± 0.053
+    Time:       63.5s
+
+  sturges         (16 bins)
+    Validity:   1.000 ± 0.000
+    Proximity:  -0.605
+    Diversity:  4.832
+    Robustness: 0.862 ± 0.095
+    Time:       22.1s
+
+  fd              (313 bins)
+    Validity:   1.000 ± 0.000
+    Proximity:  -0.617
+    Diversity:  4.832
+    Robustness: 0.860 ± 0.099
+    Time:       24.4s
+
+  scott           (73 bins)
+    Validity:   1.000 ± 0.000
+    Proximity:  -0.628
+    Diversity:  4.937
+    Robustness: 0.857 ± 0.102
+    Time:       23.4s
+
+  fixed_15        (15 bins)
+    Validity:   0.989 ± 0.032
+    Proximity:  -0.766
+    Diversity:  4.536
+    Robustness: 0.801 ± 0.145
+    Time:       49.1s
+
+  fixed_10        (10 bins)
+    Validity:   0.988 ± 0.037
+    Proximity:  -0.761
+    Diversity:  4.558
+    Robustness: 0.800 ± 0.144
+    Time:       44.3s
+
+  fixed_20        (20 bins)
+    Validity:   0.987 ± 0.038
+    Proximity:  -0.785
+    Diversity:  4.522
+    Robustness: 0.800 ± 0.146
+    Time:       50.4s
+
+  sturges         (17 bins)
+    Validity:   0.992 ± 0.014
+    Proximity:  -1.573
+    Diversity:  8.484
+    Robustness: 0.595 ± 0.037
+    Time:       74.2s
+
+  fd              (2442 bins)
+    Validity:   0.995 ± 0.009
+    Proximity:  -1.473
+    Diversity:  7.975
+    Robustness: 0.592 ± 0.041
+    Time:       74.5s
+
+RECOMMENDED CONFIGURATION:
+--------------------------------------------------------------------------------
+Configuration: scott (73 bins)
+
+Selection criteria: Minimum distance to ideal point
+  (validity=1.0, proximity=min, diversity=max, robustness=1.0)
+
+Performance:
+  Validity:   1.000 ± 0.000
+  Proximity:  -0.628
+  Diversity:  4.937
+  Robustness: 0.857 ± 0.102
+  Time:       23.4s
+
+COMPARISON TO BASELINE (10 bins):
+--------------------------------------------------------------------------------
+  Validity:   +1.2%
+  Proximity:  +17.5% (worse)
+  Diversity:  +8.3%
+  Robustness: +7.1%
+  Time:       -47.3%
+
+JUSTIFICATION:
+--------------------------------------------------------------------------------
+The 73-bin configuration is recommended because:
+  1. It is Pareto-optimal (non-dominated)
+  2. It achieves the minimum distance to the ideal point
+  3. Validity: 100.0% (target: ≥95%)
+  4. Robustness: 85.7% (primary contribution)
+
+================================================================================

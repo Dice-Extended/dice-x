@@ -1,4 +1,0 @@
-dataset,method,num_bins
-adult-income,sturges,16
-adult-income,scott,73
-adult-income,fd,313
