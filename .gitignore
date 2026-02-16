@@ -126,6 +126,23 @@ docs/notebooks/*.ipynb
 
 
 # folders
+experiments
+result_images
 experiments/cfs/
 experiments/charts/
 experiments/model_artefacts/
+
+# markdowns
+GENETIC_ROBUSTNESS_FIX.md
+dice_extended_vs_dice_comparison.tex
+gradient_flow_analysis.md
+GRADIENT_FLOW_FIX_SUMMARY.md
+SOFTMAX_FIX_SUMMARY.md
+TENSORFLOW_ROBUSTNESS_FIX_SUMMARY.md
+test_categorical_robustness.py
+test_gradient_flow.py
+test_perturbation_gradient_flow.py
+test_robustness_diagnostic.py
+test_robustness_variation.py
+test_simple_perturbations.py
+test_softmax_issue.py

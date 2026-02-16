@@ -1,2 +1,0 @@
-dataset,backend,method,lambda1,lambda2,lambda3,robustness_keep_rate_mean,div_cont_mad_mean,prox_cont_mad_negmean_mean,sparsity_cont_mean
-compas-recidivism,TF2,DiCE,0.28378638146176255,2.1232617602360486,0.0,1.0,3.172857142857143,-1.915952380952381,0.3333333333333333

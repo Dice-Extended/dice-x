@@ -1,2 +1,0 @@
-dataset,backend,method,lambda1,lambda2,lambda3,robustness_keep_rate_mean,div_cont_mad_mean,prox_cont_mad_negmean_mean,sparsity_cont_mean
-german-credit,TF2,DiCE,1.9918920492197516,4.993980255757076,0.0,0.9333333333333332,0.4353706372450271,-0.22930913899348654,0.6285714285714284
