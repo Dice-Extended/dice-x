@@ -13,7 +13,8 @@ import torch
 from dice_ml_x import diverse_counterfactuals as exp
 from dice_ml_x.explainer_interfaces.explainer_base import ExplainerBase
 from dice_ml_x.perturbation_factory import PerturbationFactory
-
+from dice_ml_x.constants import RobustnessType
+from collections import defaultdict
 
 class DicePyTorch(ExplainerBase):
 
@@ -52,22 +53,36 @@ class DicePyTorch(ExplainerBase):
             "diversity_loss": [],
             "regularization_loss": [],
             "robustness_loss": [],
-            "total_loss": [] 
+            "total_loss": []
         }
         self.model.model.to('cpu')
+        self.ohe_groups = self._get_ohe_groups(self.data_interface.categorical_feature_names,
+                                               self.data_interface.ohe_encoded_feature_names)
+
+    def _get_ohe_groups(self, cat_col_names: list[str], ohe_col_names: list[str]):
+        groups = defaultdict(list)
+
+        for i, col in enumerate(ohe_col_names):
+            for cat in cat_col_names:
+                if col.startswith(cat + "_"):
+                    groups[cat].append(i)
+                    break
+        return [groups[c] for c in cat_col_names]
 
     def _generate_counterfactuals(self, query_instance, total_CFs,
                                   desired_class="opposite", desired_range=None,
                                   proximity_weight=0.5,
                                   diversity_weight=1.0,
-                                  robustness_weight=0.4,
+                                  robustness_weight=2.0,
                                   categorical_penalty=0.1, algorithm="DiverseCF", features_to_vary="all",
                                   permitted_range=None, yloss_type="hinge_loss", diversity_loss_type="dpp_style:inverse_dist",
                                   feature_weights="inverse_mad", optimizer="pytorch:adam", learning_rate=0.05, min_iter=500,
                                   max_iter=5000, project_iter=0, loss_diff_thres=1e-5, loss_converge_maxiter=1, verbose=False,
                                   init_near_query_instance=True, tie_random=False, stopping_threshold=0.5,
                                   posthoc_sparsity_param=0.1, posthoc_sparsity_algorithm="linear", limit_steps_ls=10000,
-                                  perturbation_method="gaussian", preprocessing_bins=10, **kwargs):
+                                  perturbation_method="gaussian", preprocessing_bins=10,
+                                  robustness_type=RobustnessType.DICE_SORENSEN, separate_features: bool | None=None,
+                                  gate_only: bool | None=None, **kwargs):
         """Generates diverse counterfactual explanations.
 
         :param query_instance: Test point of interest. A dictionary of feature names and values or a single row dataframe
@@ -139,7 +154,7 @@ class DicePyTorch(ExplainerBase):
                 query_instance, desired_class, optimizer, learning_rate, min_iter, max_iter,
                 project_iter, loss_diff_thres, loss_converge_maxiter, verbose, init_near_query_instance,
                 tie_random, stopping_threshold, posthoc_sparsity_param, posthoc_sparsity_algorithm, limit_steps_ls,
-                perturbation_method, preprocessing_bins=preprocessing_bins, **kwargs)
+                perturbation_method, preprocessing_bins, robustness_type, gate_only=gate_only, **kwargs)
 
         return exp.CounterfactualExamples(
             data_interface=self.data_interface,
@@ -149,23 +164,40 @@ class DicePyTorch(ExplainerBase):
             posthoc_sparsity_param=posthoc_sparsity_param,
             desired_class=desired_class)
 
-    def get_model_output(self, input_instance,
+    """ def get_model_output(self, input_instance,
                          transform_data=False, out_tensor=True):
-        """get output probability of ML model"""
         return self.model.get_output(
                 input_instance,
                 transform_data=transform_data,
-                out_tensor=out_tensor)[(self.num_output_nodes-1):]
+                out_tensor=out_tensor)[(self.num_output_nodes-1):] """
 
-    def predict_fn(self, input_instance):
-        """prediction function"""
+    """ def predict_fn(self, input_instance, out_tensor=False):
         if not torch.is_tensor(input_instance):
             input_instance = torch.tensor(input_instance).float()
         return self.get_model_output(
-                input_instance, transform_data=False, out_tensor=False)
+                input_instance, transform_data=False, out_tensor=out_tensor) """
+
+    def get_model_output(self, input_instance, transform_data=False, out_tensor=True):
+        out = self.model.get_output(input_instance, transform_data=transform_data, out_tensor=out_tensor)
+        if out_tensor and torch.is_tensor(out) and out.ndim == 2 and out.shape[1] == 1:
+            out = out.squeeze(1)
+
+        return out
+
+    def predict_fn(self, input_instance, out_tensor=True):
+        if not torch.is_tensor(input_instance):
+            input_instance = torch.tensor(input_instance).float()
+        return self.get_model_output(input_instance, transform_data=False, out_tensor=out_tensor)
 
     def predict_fn_for_sparsity(self, input_instance):
         """prediction function for sparsity correction"""
+        x = self.model.transformer.transform(input_instance).to_numpy().astype(np.float32)
+        x_t = torch.from_numpy(x)
+        device = next(self.model.model.parameters()).device
+        x_t = x_t.to(device)
+        pred_t = self.predict_fn(x_t, out_tensor=True)  # returns torch tensor
+        pred_t = pred_t.view(-1)                        # (1,) or (n,)
+        return pred_t.detach().cpu().numpy()
         input_instance_np = self.model.transformer.transform(input_instance).to_numpy()[0]
         input_instance_np = input_instance_np.astype(np.float32)
         return self.predict_fn(torch.tensor(input_instance_np))
@@ -304,12 +336,181 @@ class DicePyTorch(ExplainerBase):
 
         diversity_loss = torch.det(det_entries)
         return diversity_loss
+
+    def perturb_cfs(self, method: str = "gaussian",
+                    std_dev: float=0.10, mean: float=0.05, flip_prob: float=0.01,
+                    cat_alpha: float = 0.2, cat_mode: str = "dirichlet",
+                    seed: int | None=None, device: torch.device | None=None,
+                    eps: float=1e-8) -> torch.Tensor:
+        cfs_stacked = torch.stack(self.cfs, dim=0)
+
+        if device is None:
+            device = cfs_stacked.device
+        cfs_stacked = cfs_stacked.to(device)
+
+        if seed is None:
+            seed = int(np.random.SeedSequence().generate_state(1)[0])
+
+        g = torch.Generator(device=device)
+        g.manual_seed(seed)
+
+        X = cfs_stacked.clone()
+        
+        cont_cols = self.encoded_continuous_feature_indexes
+        if len(cont_cols) > 0:
+
+            ranges_float = self.data_interface.get_features_range_float()[1]
+            cont_cols_names = self.data_interface.ohe_encoded_feature_names
+
+            cont_lo = torch.tensor([ranges_float[cont_cols_names[c]][0] for c in cont_cols],
+                                   device=device, dtype=torch.float32)
+            cont_hi = torch.tensor([ranges_float[cont_cols_names[c]][1] for c in cont_cols],
+                                   device=device, dtype=torch.float32)
+            span = cont_hi - cont_lo
+
+            X_cont = X[:, cont_cols]
+
+            if method == "gaussian":
+                noise = torch.randn(X_cont.shape, generator=g, device=device) * std_dev * span
+            elif method == "random":
+                u = torch.rand(X_cont.shape, generator=g, device=device) * 2.0 - 1.0
+                noise = u * (mean * span)
+            elif method == "spherical":
+                dir_ = torch.randn(X_cont.shape, generator=g, device=device)
+                dir_ = dir_ / (torch.linalg.norm(dir_, dim=1, keepdim=True) + 1e-12)
+                r = torch.rand((X_cont.shape[0], 1), generator=g, device=device) * mean
+                noise = dir_ * r * span
+            else:
+                raise ValueError(f"Unsupported method: {method}")
+
+            X_cont = torch.clamp(X_cont + noise, min=cont_lo, max=cont_hi)
+            X[:, cont_cols] = X_cont
+        if getattr(self, "ohe_groups", None) and len(self.ohe_groups) > 0:
+            for group in self.ohe_groups:
+                idx = torch.tensor(group, device=device, dtype=torch.long)
+                Xg = X.index_select(dim=1, index=idx)
+
+                do_perturb = (torch.rand((X.shape[0], ), generator=g, device=device) < flip_prob)
+                if not do_perturb.any():
+                    continue
+
+                rows = torch.where(do_perturb)[0]
+                Xg_rows = Xg[rows]
+
+                m = Xg_rows.shape[1]
+
+                if cat_mode == "uniform":
+                    u = torch.full_like(Xg_rows, 1.0 / float(m))
+                elif cat_mode == "dirichlet":
+                    u = torch.rand(Xg_rows.shape, generator=g,
+                                   device=Xg_rows.device, dtype=Xg_rows.dtype).clamp_min(eps)
+                    u = -torch.log(u)
+                    u = u / (u.sum(dim=1, keepdim=True) + eps)
+                else:
+                    raise ValueError(f"Unsupported cat_mode: {cat_mode}")
+
+                alpha = float(cat_alpha)
+                Xg_new = (1.0 - alpha) * Xg_rows + alpha * u
+                Xg_new = Xg_new / (Xg_new.sum(dim=1, keepdim=True) + eps)
+                Xg[rows] = Xg_new
+                X[:, idx] = Xg
+
+        return X
+
+        """ if len(self.ohe_groups) > 0:
+            for group in self.ohe_groups:
+                cat_cols_grp = torch.tensor(group, device=device, dtype=torch.long)
+                do_flip = torch.rand((X.shape[0], ), generator=g, device=device) < flip_prob
+                if not do_flip.any().item():
+                    continue
+                row_idx = torch.where(do_flip)[0] 
+                k = cat_cols_grp.numel()
+                new_cat = torch.randint(0, k, (row_idx.numel(),), generator=g, device=device)
+                X[row_idx[:, None], cat_cols_grp] = 0.0
+                chosen_cols = cat_cols_grp[new_cat]
+                X[row_idx, chosen_cols] = 1.0
+        return X """
+
+    def compute_robustness_distance(self, perturbed_cfs: torch.Tensor, preprocessing_bins: int=10,
+                                    ) -> torch.Tensor:
+        cfs = torch.stack(self.cfs, dim=0)
+
+        cfs_processed, perturbed_cfs_processed = self._preprocess_for_robustness(cfs, perturbed_cfs, num_bins=preprocessing_bins)
+
+        intersection = torch.sum(torch.min(cfs_processed, perturbed_cfs_processed), dim=1)
+
+        union = torch.sum(cfs_processed, dim=1) + torch.sum(perturbed_cfs_processed, dim=1)
+
+        epsilon = 1e-8
+        dice = (2 * intersection) / (union + epsilon)
+        dice = torch.nan_to_num(dice, nan=1.0)
+
+        return dice
+
+    def compute_robustness_loss_(self, perturbed_cfs: torch.Tensor, preprocessing_bins: int=10,
+                                 desired_class="opposite") -> torch.Tensor:
+        base_prob = self.predict_fn(self.x1, out_tensor=True).squeeze()
+        base_label = (base_prob.detach() > 0.5).float()
+        if desired_class == "opposite":
+            target_label = 1.0 - base_label
+        else:
+            target_label = torch.tensor(float(desired_class), device=perturbed_cfs.device)
+
+        dist_vec = self.compute_robustness_distance(perturbed_cfs, preprocessing_bins)
+        pert_prob = self.predict_fn(perturbed_cfs, out_tensor=True).squeeze()
+        gate = target_label * pert_prob + (1.0 - target_label) * (1.0 - pert_prob)
+        return torch.mean(dist_vec * gate)
     
+    def compute_robustness_loss_soft(
+        self,
+        perturbed_cfs: torch.Tensor,
+        preprocessing_bins: int = 10,
+        desired_class="opposite",
+        temperature: float = 1.0,   # optional: sharpen/soften gate if you use logits
+        detach_target: bool = True  # optional: keep target decision fixed
+    ) -> torch.Tensor:
+
+        # 1) Determine target class WITHOUT breaking graph.
+        # If you want target to be fixed (recommended), detach.
+        base_score = self.predict_fn(self.x1, out_tensor=True)  # shape: (1,) or (1,1) typically
+        base_score = base_score.squeeze()
+
+        if detach_target:
+            base_score = base_score.detach()
+
+        # base_prob in [0,1]
+        base_prob = base_score
+
+        if desired_class == "opposite":
+            # If base_prob > 0.5 => target=0, else target=1
+            # Use a *soft* target label in [0,1] instead of hard {0,1}
+            # This produces a smooth transition near 0.5.
+            target_prob = 1.0 - base_prob
+        else:
+            # desired_class is 0 or 1
+            target_prob = torch.tensor(float(desired_class), device=perturbed_cfs.device)
+
+        # 2) Per-sample similarity/distances (must be vector, not mean)
+        dist_vec = self.compute_robustness_distance(perturbed_cfs, preprocessing_bins)
+        # dist_vec shape: (N,)  <-- IMPORTANT
+
+        # 3) Soft gate: probability of being in the target class
+        pert_scores = self.predict_fn(perturbed_cfs, out_tensor=True).squeeze()  # (N,)
+
+        # If your predict_fn outputs probabilities (sigmoid), use directly:
+        # P(y=1|x) = pert_scores
+        # P(y=0|x) = 1 - pert_scores
+        gate = target_prob * pert_scores + (1.0 - target_prob) * (1.0 - pert_scores)
+        # gate in [0,1], differentiable w.r.t. pert_scores
+
+        # 4) Robustness objective (maximize similarity for target-valid perturbations)
+        return torch.mean(dist_vec * gate)
+
     def do_perturbation(self):
         cfs_stacked = torch.stack(self.cfs, dim=0)
-    
+        
         #cfs_perturbed = torch.nn.Parameter(cfs_stacked.clone(), requires_grad=True)
-
+        
         if self.encoded_continuous_feature_indexes:
             
             continuous_slice = cfs_stacked[:, self.encoded_continuous_feature_indexes]
@@ -333,24 +534,22 @@ class DicePyTorch(ExplainerBase):
                 cfs_perturbed = cfs_stacked + cat_mask
         cfs_perturbed = torch.nn.Parameter(cfs_stacked.clone(), requires_grad=True)
         return cfs_perturbed
-    
 
     def generate_perturbations(self, method: str, max_iter=100,
                                tol=1e-3, gamma=1e-2):
         perturbed_cfs = self.do_perturbation()
         perturbation_optimizer = torch.optim.Adam([perturbed_cfs], lr=1e-3)
-            
+
         prev_loss = np.inf
         for _ in range(max_iter):
             # Remove torch.no_grad() to maintain gradient flow
             self.model.model.eval()
             pred_i = self.model.model(torch.stack(self.cfs, dim=0))
             pred_i_prime = self.model.model(perturbed_cfs)
-            
+
             class_loss = torch.mean((pred_i - pred_i_prime) ** 2)
             distance = torch.norm(perturbed_cfs - torch.stack(self.cfs, dim=0), p=2)
             loss = class_loss + gamma * distance
-
 
             perturbation_optimizer.zero_grad()
             loss.backward()
@@ -388,7 +587,6 @@ class DicePyTorch(ExplainerBase):
         for i in range(self.total_CFs):
             for v in self.encoded_categorical_feature_indexes:
                 regularization_loss += torch.pow((torch.sum(self.cfs[i][v[0]:v[-1]+1]) - 1.0), 2)
-
         return regularization_loss
     
     def _preprocess_for_robustness(self, cfs: torch.Tensor, perturbed_cfs: torch.Tensor, num_bins: int=10) -> tuple:
@@ -414,8 +612,6 @@ class DicePyTorch(ExplainerBase):
                 one_hot_col = torch.nn.functional.one_hot(binned_indices, num_classes=num_bins).float()
                 all_one_hots.append(one_hot_col)
             return torch.cat(all_one_hots, dim=1)
-        
-        
 
         cat_cols = [col for group in self.encoded_categorical_feature_indexes for col in group]
 
@@ -429,8 +625,16 @@ class DicePyTorch(ExplainerBase):
         perturbed_cfs_processed = torch.cat([perturbed_cfs_one_hot, perturbed_cfs_cats], dim=1)
 
         return cfs_processed, perturbed_cfs_processed
-    
-    def _phi_soft(self, X: torch.Tensor, num_bins: int=10,
+
+    def _fit_bins(self, X: torch.Tensor, num_bins: int=10) -> torch.Tensor:
+        cont_idxs = torch.as_tensor(self.encoded_continuous_feature_indexes, dtype=torch.long, device=X.device)
+        cont = X[:, cont_idxs]
+
+        percentiles = torch.linspace(0, 100, num_bins, device=X.device, dtype=X.dtype)
+        bin_centers = torch.quantile(cont, percentiles / 100.0, dim=0, interpolation='linear')
+        return bin_centers.T
+
+    def _phi_soft(self, X: torch.Tensor, num_bins: int=10, bin_centers: torch.Tensor=None,
                   sigma: float=0.1, eps: float=1e-8, tau: float=1.0) -> torch.Tensor:
         """
         Soft, differentiable feature map for robustness:
@@ -438,7 +642,7 @@ class DicePyTorch(ExplainerBase):
             - Categorical one-hot groups -> kept as-is (already differentiable during optimization)
         Returns: (N, D') tensor suitable for soft-Dice.
         Assumes X is already in the *model's internal normalized space* (e.g., [0,1] for cont).
-        
+
         Note: One-hot encoded categorical features are NOT passed through softmax, as this would
         make all categories artificially similar. During gradient descent, one-hot vectors
         naturally become "soft" (e.g., [0.9, 0.05, 0.05]), which preserves distinctiveness.
@@ -450,23 +654,32 @@ class DicePyTorch(ExplainerBase):
             cont = X[:, idx]
 
             cont = cont.clamp(0.0, 1.0)
-            centers = torch.linspace(0.0, 1.0, num_bins, device=X.device, dtype=X.dtype)
-            cont_exp = cont.unsqueeze(-1)
-            rbf = torch.exp(- (cont_exp - centers) ** 2 / (2.0 * (sigma ** 2)))
+            if bin_centers is not None:
+                centers = bin_centers.to(X.device)
+                cont_exp = cont.unsqueeze(-1)
+                centers_exp = centers.unsqueeze(0)
+                rbf = torch.exp(-(cont_exp - centers_exp) ** 2 / (2.0 * sigma **2))
+            else:
+                centers = torch.linspace(0.0, 1.0, num_bins, device=X.device, dtype=X.dtype)
+                cont_exp = cont.unsqueeze(-1)
+                rbf = torch.exp(-(cont_exp - centers) ** 2 / (2.0 * sigma ** 2))
+
             rbf = rbf / (rbf.sum(dim=1, keepdim=True) + eps)
             parts.append(rbf.reshape(cont.size(0), -1))
 
-            
         if getattr(self, "encoded_categorical_feature_indexes", None):
             for grp in self.encoded_categorical_feature_indexes:
-                g = X[:, grp]
-                # Keep one-hot vectors as-is - they're already differentiable
-                # During optimization, they naturally become "soft" one-hot vectors
-                # This preserves categorical distinctiveness better than softmax
-                parts.append(g)
+                grp_idx = torch.as_tensor(grp, dtype=torch.long, device=X.device)
+                g = X[:, grp_idx]
+                g_max = g.max(dim=1, keepdim=True)[0]
+                g_shifted = g - g_max
+                exp_g = torch.exp(g_shifted)
+                sm = exp_g / (exp_g.sum(dim=1, keepdim=True) + eps)
+                parts.append(sm)
         return torch.cat(parts, dim=1) if parts else X
-    
-    def compute_robustness_loss_SDS(self, perturbed_cfs: torch.Tensor, eps: float=1e-8) -> torch.Tensor:
+
+    def compute_robustness_loss_binned_RBF(self, perturbed_cfs: torch.Tensor, num_bins: int=10,
+                                           sigma: float=0.1, eps: float=1e-8) -> torch.Tensor:
         """
         Soft-Dice robustness similarity in [0,1]; higher is better.
         Returns a scalar (mean across CFs) to plug into your total loss with +λ3 * robustness.
@@ -478,14 +691,110 @@ class DicePyTorch(ExplainerBase):
         if perturbed_cfs.dim() == 3 and perturbed_cfs.size(1) == 1:
             perturbed_cfs = perturbed_cfs.squeeze(dim=1)
 
-        p = self._phi_soft(cfs)
-        q = self._phi_soft(perturbed_cfs)
+        all_cfs = torch.cat([cfs, perturbed_cfs], dim=0)
+        bin_centers = self._fit_bins(all_cfs, num_bins=num_bins)
 
-        num = 2.0 * (p * q).sum(dim=1)
-        den = (p * p).sum(dim=1) + (q * q).sum(dim=1) + eps
-        sdc = num / den
-        return sdc.mean()
-            
+        p = self._phi_soft(cfs, bin_centers=bin_centers, num_bins=num_bins)
+        q = self._phi_soft(perturbed_cfs, bin_centers=bin_centers, num_bins=num_bins)
+
+        squared_distance = torch.dist(p, q, p=2) ** 2
+        kernel_similarity = torch.exp(-squared_distance / (2 * sigma ** 2))
+        return kernel_similarity
+
+    def compute_robustness_distance_RBF(self, perturbed_cfs: torch.Tensor, sigma: float | torch.Tensor | None=None,
+                                    gamma: float | None=None, separate_features: bool | None=None,
+                                    atol: float=1e-6, eps: float=1e-8) -> torch.Tensor:
+        cfs = torch.stack(self.cfs, dim=0)
+        if cfs.dim() == 3 and cfs.size(1) == 1:
+            cfs = cfs.squeeze(dim=1)
+
+        if perturbed_cfs.dim() == 3 and perturbed_cfs.size(1) == 1:
+            perturbed_cfs = perturbed_cfs.squeeze(dim=1)
+
+        assert cfs.shape == perturbed_cfs.shape, f"Shape mismatch: {cfs.shape} vs {perturbed_cfs.shape}"
+        k, _ = cfs.shape
+
+        device = cfs.device
+        dtype = cfs.dtype
+
+        def rbf_similarity(X: torch.Tensor, Y: torch.Tensor, sig: float | torch.Tensor | None) -> torch.Tensor:
+            diff = X - Y
+
+            if sig is None:
+                stacked = torch.cat([X, Y], dim=0)
+                sig = torch.std(stacked, dim=0) + eps
+
+            if isinstance(sig, (float, int)) or (torch.is_tensor(sig) and sig.ndim == 0):
+                s = torch.as_tensor(sig, device=device, dtype=dtype)
+                sq = (diff * diff).sum(dim=1)  # (k,)
+                return torch.exp(-sq / (2.0 * s * s))
+            else:
+                s = sig.to(device=device, dtype=dtype)
+                sq = (diff * diff) / (2.0 * (s * s))
+                return torch.exp(-sq.sum(dim=1))
+
+        if not separate_features:
+            sim = rbf_similarity(cfs, perturbed_cfs, sigma)
+            return sim
+
+        cont_cols = list(self.encoded_continuous_feature_indexes)
+        ohe_groups = getattr(self, "ohe_groups", None)
+
+        if len(cont_cols) > 0:
+            X_cont = cfs[:, cont_cols]
+            Y_cont = perturbed_cfs[:, cont_cols]
+            sim_cont = rbf_similarity(X_cont, Y_cont, sigma)
+        else:
+            sim_cont = torch.ones(k, device=device, dtype=dtype)
+
+        if ohe_groups is not None and len(ohe_groups) > 0:
+            group_dists = []
+            for g in ohe_groups:
+                idx = torch.as_tensor(g, device=device)
+                Xg = cfs.index_select(dim=1, index=idx)
+                Yg = perturbed_cfs.index_select(dim=1, index=idx)
+                overlap = (Xg * Yg).sum(dim=1)
+                dist_g = 1.0 - overlap
+                group_dists.append(dist_g)
+            ham = torch.stack(group_dists, dim=1).mean(dim=1)
+        else:
+            cat_cols = list(self.encoded_categorical_feature_indexes)
+            if len(cat_cols) > 0:
+                X_cat = cfs[:, cat_cols]
+                Y_cat = perturbed_cfs[:, cat_cols]
+                neq = ~torch.isclose(X_cat, Y_cat, atol=atol)
+                ham = neq.to(dtype).mean(dim=1)
+            else:
+                ham = torch.zeros(k, device=device, dtype=dtype)
+
+        if gamma is None:
+            gamma = 0.2
+        gamma_t = torch.as_tensor(max(float(gamma), 1e-6), device=device, dtype=dtype)
+
+        sim_cat = torch.exp(-ham / gamma_t)
+
+        sim = sim_cont * sim_cat
+        return sim
+
+    def compute_robustness_loss_RBF(self, perturbed_cfs: torch.Tensor, sigma: float | torch.Tensor | None=None,
+                                    gamma: float | None=None, separate_features: bool | None=None,
+                                    atol: float=1e-6, eps: float=1e-8, desired_class="opposite",
+                                    gate_only: bool | None=True) -> torch.Tensor:
+        base_prob = self.predict_fn(self.x1, out_tensor=True).squeeze()
+        base_label = (base_prob.detach() > 0.5).float()
+        if desired_class == "opposite":
+            target_label = 1.0 - base_label
+        else:
+            target_label = torch.tensor(float(desired_class), device=perturbed_cfs.device)
+
+        dist_vec = self.compute_robustness_distance_RBF(perturbed_cfs, sigma, gamma, separate_features,
+                                                        atol, eps)
+        pert_prob = self.predict_fn(perturbed_cfs, out_tensor=True).squeeze()
+        gate = target_label * pert_prob + (1.0 - target_label) * (1.0 - pert_prob)
+        print("dist_mean", dist_vec.mean().item(), "gate_mean", gate.mean().item(), "rob_mean", (dist_vec*gate).mean().item())
+        sim = torch.mean(gate) if gate_only else torch.mean(dist_vec * gate)
+        return sim
+
     def compute_robustness_loss(self, perturbed_cfs: torch.Tensor, preprocessing_bins: int=10) -> torch.Tensor:
         """
         Computes the robustness loss.
@@ -495,7 +804,7 @@ class DicePyTorch(ExplainerBase):
             be compared against the original counterfactual instances.
         Returns:
             float: Robustness loss in scalar.
-        """ 
+        """
         cfs = torch.stack(self.cfs, dim=0)
 
         # from IPython.display import display
@@ -507,9 +816,9 @@ class DicePyTorch(ExplainerBase):
         cfs_processed, perturbed_cfs_processed = self._preprocess_for_robustness(cfs, perturbed_cfs, num_bins=preprocessing_bins)
 
         intersection = torch.sum(torch.min(cfs_processed, perturbed_cfs_processed), dim=1)
-        
+
         union = torch.sum(cfs_processed, dim=1) + torch.sum(perturbed_cfs_processed, dim=1)
-        
+
         epsilon = 1e-8
         sorensen_dice_coefficient = (2 * intersection) / (union + epsilon)
         sorensen_dice_coefficient[torch.isnan(sorensen_dice_coefficient)] = 1.0
@@ -517,16 +826,40 @@ class DicePyTorch(ExplainerBase):
         #print("Gradients:", test_grad)
         return sorensen_dice_coefficient.mean()
 
-
-    def compute_loss(self, method: str, preprocessing_bins: int=10, **kwargs):
+    def compute_loss(self, method: str, desired_class, preprocessing_bins: int=10,
+                     robustness_type: RobustnessType=RobustnessType.DICE_SORENSEN,
+                     separate_features: bool | None=None, gate_only: bool | None=None, **kwargs):
         """Computes the overall loss"""
+        if robustness_type != RobustnessType.GAUSSIAN_KERNEL and separate_features is not None:
+            raise ValueError("`separate_features` can only be used when `robustness_type == RobustnessType.GAUSSIAN_KERNEL`.")
+        if robustness_type != RobustnessType.GAUSSIAN_KERNEL and gate_only is not None:
+            raise ValueError("`gate_only` can only be used when `robustness_type == RobustnessType.GAUSSIAN_KERNEL`.")
         self.yloss = self.compute_yloss()
         self.proximity_loss = self.compute_proximity_loss() if self.proximity_weight > 0 else 0.0
         self.diversity_loss = self.compute_diversity_loss() if self.diversity_weight > 0 else 0.0
         self.regularization_loss = self.compute_regularization_loss()
-        perturbed_cfs = self.generate_perturbations('gaussian')
-        self.robustness_loss = self.compute_robustness_loss(perturbed_cfs=perturbed_cfs, preprocessing_bins=preprocessing_bins)
-        
+        perturbed_cfs = self.generate_perturbations(method)
+        if robustness_type is not RobustnessType.DICE_SORENSEN:
+            perturbed_cfs = self.perturb_cfs(method=method, std_dev=kwargs.get("std_dev", 0.1), seed=42,
+                                             mean=kwargs.get("mean", 0.05), flip_prob=kwargs.get("flip_prob", 0.5),
+                                             cat_alpha=kwargs.get("cat_alpha", 0.7), cat_mode=kwargs.get("cat_mode", "dirichlet"))
+        # perturbed_cfs = self.generate_perturbations("gaussian")
+        if robustness_type == RobustnessType.DICE_SORENSEN:
+            self.robustness_loss = self.compute_robustness_loss(perturbed_cfs)
+        elif robustness_type == RobustnessType.GATED_DICE_SORENSEN:
+            self.robustness_loss = self.compute_robustness_loss_(perturbed_cfs=perturbed_cfs, desired_class=desired_class,
+                                                                 preprocessing_bins=preprocessing_bins) if self.robustness_weight > 0 else 0.0
+        elif robustness_type == RobustnessType.GAUSSIAN_KERNEL:
+            if gate_only == False:
+                perturbed_cfs = self.perturb_cfs(method=method)
+            self.robustness_loss = self.compute_robustness_loss_RBF(perturbed_cfs=perturbed_cfs, desired_class=desired_class,
+                                                                    gamma=1.0, separate_features=separate_features, gate_only=gate_only) \
+                                                                    if self.robustness_weight > 0 else 0.0
+        elif robustness_type == RobustnessType.BINNED_GAUSSIAN_KERNEL:
+            self.robustness_loss = self.compute_robustness_loss_binned_RBF(perturbed_cfs=perturbed_cfs, num_bins=preprocessing_bins) if self.robustness_weight > 0 else 0.0
+        else:
+            raise ValueError("Unsupported method. Supported types: Dice-Sorensen, Gaussian Kernel, and Binned Gaussian Kernel")
+
         self.loss = self.yloss + (self.proximity_weight * self.proximity_loss) - \
             (self.diversity_weight * self.diversity_loss) - \
             (self.robustness_weight * self.robustness_loss) + \
@@ -583,13 +916,11 @@ class DicePyTorch(ExplainerBase):
         else:
             return temp_cfs
 
-    
     def get_validity_percentage(self):
         cfs_np = np.array([cf.detach().cpu().numpy() for cf in self.cfs])
         unique_cfs_np = np.unique(cfs_np, axis=0)
-        
-        predictions = [self.predict_fn(torch.tensor(cf).float()) for cf in unique_cfs_np]
-        
+
+        predictions = [self.predict_fn(torch.tensor(cf).float()) for cf in unique_cfs_np]        
         valid_count = 0
         for pred in predictions:
             if (self.target_cf_class == 0 and pred[0] <= self.stopping_threshold) or \
@@ -651,7 +982,9 @@ class DicePyTorch(ExplainerBase):
                              max_iter, project_iter, loss_diff_thres, loss_converge_maxiter, verbose,
                              init_near_query_instance, tie_random, stopping_threshold, posthoc_sparsity_param,
                              posthoc_sparsity_algorithm, limit_steps_ls, perturbation_method: str,
-                             preprocessing_bins: int=10, **kwargs):
+                             preprocessing_bins: int=10,
+                             robustness_type: RobustnessType=RobustnessType.DICE_SORENSEN,
+                             separate_features: bool | None=None, gate_only: bool | None=None, **kwargs):
         """Finds counterfactuals by gradient-descent."""
 
         self._reset_loss_history()
@@ -662,7 +995,7 @@ class DicePyTorch(ExplainerBase):
         # find the predicted value of query_instance
         test_pred = self.predict_fn(torch.tensor(query_instance_np).float())[0]
         if desired_class == "opposite":
-            desired_class = 1.0 - np.round(test_pred)
+            desired_class = 1.0 - torch.round(test_pred)
         self.target_cf_class = torch.tensor(desired_class).float()
 
         self.min_iter = min_iter
@@ -718,7 +1051,8 @@ class DicePyTorch(ExplainerBase):
                 self.model.model.zero_grad()
 
                 # get loss and backpropogate
-                loss_value = self.compute_loss(perturbation_method, preprocessing_bins=preprocessing_bins, **kwargs)
+                loss_value = self.compute_loss(perturbation_method, desired_class, preprocessing_bins, robustness_type,
+                                               separate_features=separate_features, gate_only=gate_only, **kwargs)
                 self.loss.backward()
                 
                 self._populate_loss_history(it, self.yloss.detach().item(), self.proximity_loss.detach().item(),
@@ -749,15 +1083,21 @@ class DicePyTorch(ExplainerBase):
 
                 # backing up CFs if they are valid
                 temp_cfs_stored = self.round_off_cfs(assign=False)
-                test_preds_stored = [self.predict_fn(cf) for cf in temp_cfs_stored]
+                with torch.no_grad():
+                    test_preds_stored = [self.predict_fn(cf).detach() for cf in temp_cfs_stored]
+                    #test_preds_stored = [self.predict_fn(cf) for cf in temp_cfs_stored]
 
                 if ((self.target_cf_class == 0 and all(i <= self.stopping_threshold for i in test_preds_stored)) or
                    (self.target_cf_class == 1 and all(i >= self.stopping_threshold for i in test_preds_stored))):
-                    avg_preds_dist = np.mean([abs(pred[0]-self.stopping_threshold) for pred in test_preds_stored])
+                    with torch.no_grad():
+                        avg_preds_dist = torch.mean(
+                            torch.stack([torch.abs(pred[0] - self.stopping_threshold) for pred in test_preds_stored])
+                        ).item()
+                        #avg_preds_dist = np.mean([abs(pred[0]-self.stopping_threshold) for pred in test_preds_stored])
                     if avg_preds_dist < self.min_dist_from_threshold[loop_ix]:
                         self.min_dist_from_threshold[loop_ix] = avg_preds_dist
                         for ix in range(self.total_CFs):
-                            self.best_backup_cfs[loop_ix+ix] = copy.deepcopy(temp_cfs_stored[ix])
+                            self.best_backup_cfs_preds[loop_ix+ix] = test_preds_stored[ix].detach().clone()
                             self.best_backup_cfs_preds[loop_ix+ix] = copy.deepcopy(test_preds_stored[ix])
 
             # rounding off final cfs - not necessary when inter_project=True
@@ -788,7 +1128,11 @@ class DicePyTorch(ExplainerBase):
         query_instance = np.array([query_instance_np], dtype=np.float32)
         for tix in range(max(loop_find_CFs, self.total_CFs)):
             self.final_cfs[tix] = np.array([self.final_cfs[tix]], dtype=np.float32)
-            self.cfs_preds[tix] = np.array([self.cfs_preds[tix]], dtype=np.float32)
+            p = self.cfs_preds[tix]
+            if torch.is_tensor(p):
+                p = p.detach().cpu().numpy()
+            self.cfs_preds[tix] = np.array([p], dtype=np.float32)
+            #self.cfs_preds[tix] = np.array([self.cfs_preds[tix]], dtype=np.float32)
 
             # if self.final_cfs_sparse is not None:
             #     self.final_cfs_sparse[tix] = np.array([self.final_cfs_sparse[tix]], dtype=np.float32)
@@ -811,7 +1155,9 @@ class DicePyTorch(ExplainerBase):
 
         test_instance_df = self.model.transformer.inverse_transform(
                 self.data_interface.get_decoded_data(query_instance_2d))
-        test_instance_df[self.data_interface.outcome_name] = np.array(np.round(test_pred, 3))
+        tp = test_pred.detach().cpu().view(-1).numpy()
+        test_instance_df[self.data_interface.outcome_name] = np.round(tp, 3)
+        #test_instance_df[self.data_interface.outcome_name] = np.array(np.round(test_pred, 3))
 
         # post-hoc operation on continuous features to enhance sparsity - only for public data
         if posthoc_sparsity_param is not None and posthoc_sparsity_param > 0 and 'data_df' in self.data_interface.__dict__:

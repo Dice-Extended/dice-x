@@ -576,6 +576,7 @@ dependencies = [
     { name = "torcheval" },
     { name = "torchvision" },
     { name = "tqdm" },
+    { name = "typing-extensions" },
     { name = "ucimlrepo" },
 ]
 
@@ -605,6 +606,7 @@ requires-dist = [
     { name = "torcheval", specifier = ">=0.0.7" },
     { name = "torchvision", specifier = "==0.14.1" },
     { name = "tqdm", specifier = ">=4.67.1" },
+    { name = "typing-extensions", specifier = ">=4.5.0" },
     { name = "ucimlrepo", specifier = ">=0.0.7" },
 ]
 

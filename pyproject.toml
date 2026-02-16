@@ -30,5 +30,6 @@ dependencies = [
     "pytest>=8.4.2",
     "tensorflow==2.13",
     "seaborn>=0.13.2",
+    "typing-extensions>=4.5.0",
 ]
 

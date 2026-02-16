@@ -4,13 +4,14 @@ Module to generate diverse counterfactual explanations based on tensorflow 2.x
 from dice_ml_x.explainer_interfaces.explainer_base import ExplainerBase
 from dice_ml_x.counterfactual_explanations import CounterfactualExplanations
 from dice_ml_x import diverse_counterfactuals as exp
-import tensorflow.python.keras.backend as K
+from dice_ml_x.constants import RobustnessType
 import tensorflow as tf
-import pandas as pd
 import numpy as np
 import copy
-import random
 import timeit
+from collections import defaultdict
+
+
 # To suppress TensorFlow warning about the optimizer running slowly on Apple chips.
 import absl.logging
 absl.logging.set_verbosity(absl.logging.ERROR)
@@ -66,6 +67,18 @@ class DiceTensorFlow2(ExplainerBase):
             "robustness_loss": [],
             "total_loss": []
         }
+        self.ohe_groups = self._get_ohe_groups(self.data_interface.categorical_feature_names,
+                                               self.data_interface.ohe_encoded_feature_names)
+
+    def _get_ohe_groups(self, cat_col_names: list[str], ohe_col_names: list[str]):
+        groups = defaultdict(list)
+
+        for i, col in enumerate(ohe_col_names):
+            for cat in cat_col_names:
+                if col.startswith(cat + "_"):
+                    groups[cat].append(i)
+                    break
+        return [groups[c] for c in cat_col_names]
 
     def generate_counterfactuals(self, query_instances, total_CFs, desired_class="opposite", proximity_weight=0.5,
                                  diversity_weight=1.0, robustness_weight=0.5, categorical_penalty=0.1, algorithm="DiverseCF",
@@ -275,9 +288,104 @@ class DiceTensorFlow2(ExplainerBase):
         elif opt_method == "rmsprop":
             self.optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
 
+    def perturb_cfs(self, method: str = "gaussian",
+                    std_dev: float=0.10, mean: float=0.2, flip_prob: float=0.05,
+                    seed: int | None=None) -> tf.Tensor:
+
+        cfs_stacked = tf.stack(self.cfs, axis=0)
+
+        if cfs_stacked.shape.rank == 3:
+            cfs_stacked = tf.squeeze(cfs_stacked, axis=1)
+
+        X = tf.identity(cfs_stacked)
+
+        if seed is None:
+            seed = int(np.random.SeedSequence().generate_state(1)[0])
+
+        seed2 = tf.constant([seed, seed ^ 0x9E3779B9], dtype=tf.int32)
+
+        cont_cols = self.encoded_continuous_feature_indexes
+        ranges_float = self.data_interface.get_features_range_float()[1]
+        cont_col_names = self.data_interface.ohe_encoded_feature_names
+
+        cont_lo = tf.constant([ranges_float[cont_col_names[c]][0] for c in cont_cols], dtype=tf.float32)
+        cont_hi = tf.constant([ranges_float[cont_col_names[c]][1] for c in cont_cols], dtype=tf.float32)
+
+        span = tf.reshape(cont_hi - cont_lo, [1, -1])
+
+        X_cont = tf.gather(X, cont_cols, axis=1)
+
+        if method == "gaussian":
+            eps = tf.random.stateless_normal(tf.shape(X_cont), seed=seed2, dtype=X_cont.dtype)
+            noise = eps * std_dev * span
+        elif method == "random":
+            u = tf.random.stateless_uniform(tf.shape(X_cont), seed=seed2, dtype=X_cont.dtype) * 2.0 - 1.0
+            noise = u * (mean * span)
+        elif method == "spherical":
+            dir_ = tf.random.stateless_normal(tf.shape(X_cont), seed=seed2, dtype=X_cont.dtype)
+            dir_ = dir_ / (tf.norm(dir_, axis=1, keepdims=True) + 1e-12)
+
+            n = tf.shape(X_cont)[0]
+            seed_r = seed2 + tf.constant([1, 1], tf.int32)
+            r = tf.random.stateless_uniform((n, 1), seed=seed_r, dtype=X_cont.dtype) * mean
+            noise = dir_ * r * span
+        else:
+            raise ValueError(f"Unsupported method: {method}")
+
+        X_cont_new = tf.clip_by_value(X_cont + noise, clip_value_min=cont_lo, clip_value_max=cont_hi)
+        n, d_cont = tf.shape(X)[0], tf.shape(X_cont_new)[1]
+        rows = tf.repeat(tf.range(n)[:, None], repeats=d_cont, axis=1)
+        cols = tf.repeat(tf.constant(cont_cols)[None, :], repeats=n, axis=0)
+        idx = tf.stack([tf.reshape(rows, [-1]), tf.reshape(cols, [-1])], axis=1)
+        X = tf.tensor_scatter_nd_update(X, idx, tf.reshape(X_cont_new,  [-1]))
+        N = tf.shape(X)[0]
+
+        if getattr(self, "ohe_groups", None):
+            for gi, group in enumerate(self.ohe_groups):
+                """ cat_cols_grp = tf.constant(group, dtype=tf.int32)
+                k = tf.size(cat_cols_grp)
+
+                seed_flip = seed2 + tf.constant([10 + gi, 20 + gi], tf.int32)
+                do_flip = tf.random.stateless_uniform((N,), seed=seed_flip, dtype=tf.float32) < flip_prob
+                row_idx = tf.cast(tf.where(do_flip)[:, 0], tf.int32)
+                m = tf.shape(row_idx)[0]
+
+                seed_cat = seed2 + tf.constant([100 + gi, 200 + gi], tf.int32)
+                new_cat = tf.random.stateless_uniform((m,), seed=seed_cat, minval=0, maxval=k, dtype=tf.int32)
+                chosen_cols = tf.gather(cat_cols_grp, new_cat)
+
+                row_rep = tf.repeat(row_idx, repeats=k)
+                col_tile = tf.tile(cat_cols_grp, multiples=[m])
+                idx0 = tf.stack([row_rep, col_tile], axis=1)
+                X = tf.tensor_scatter_nd_update(X, idx0, tf.zeros((m * k,), dtype=X.dtype))
+
+                idx1 = tf.stack([row_idx, chosen_cols], axis=1)
+                X = tf.tensor_scatter_nd_update(X, idx1, tf.ones((m,), dtype=X.dtype)) """
+
+                grp = tf.constant(group, dtype=tf.int32)      # [k]
+                k = tf.shape(grp)[0]
+                grp_vals = tf.gather(X, grp, axis=1)          # [N, k]
+
+                seed_flip = seed2 + tf.constant([10 + gi, 20 + gi], tf.int32)
+                do_flip = tf.random.stateless_uniform((N,), seed=seed_flip, dtype=tf.float32) < flip_prob
+                do_flip_f = tf.cast(do_flip[:, None], X.dtype)  # [N,1]
+
+                seed_cat = seed2 + tf.constant([100 + gi, 200 + gi], tf.int32)
+                new_cat = tf.random.stateless_uniform((N,), seed=seed_cat, minval=0, maxval=k, dtype=tf.int32)  # [N]
+                new_onehot = tf.one_hot(new_cat, depth=k, dtype=X.dtype)  # [N,k]
+
+                grp_new = grp_vals * (1.0 - do_flip_f) + new_onehot * do_flip_f  # [N,k]
+
+                X = tf.tensor_scatter_nd_update(
+                    X,
+                    indices=tf.stack([tf.repeat(tf.range(N), k), tf.tile(grp, [N])], axis=1),
+                    updates=tf.reshape(grp_new, [-1])
+                )
+
+        return X
+
     def do_perturbation(self):
         cfs_stacked = tf.squeeze(tf.stack(self.cfs, axis=0), axis=1)  # (K,D)
-
         if self.encoded_continuous_feature_indexes:
             continuous_slice = tf.gather(cfs_stacked, self.encoded_continuous_feature_indexes, axis=1)
             noise = 0.3 * continuous_slice
@@ -368,10 +476,11 @@ class DiceTensorFlow2(ExplainerBase):
             prev_loss = loss
         return tf.stop_gradient(c_i_prime) """
 
-    @tf.function(jit_compile=True)
+    @tf.function(jit_compile=False)
     def generate_perturbations_vectorized(self, max_iter=100, tol=1e-3, gamma=1e-2, **kwargs):
         c_i_prime = self.do_perturbation()          # Tensor (K, D)
         c_i = tf.stack(self.cfs, axis=0)      # (K,1,D) or (K,D)
+        
         tol = tf.convert_to_tensor(tol, dtype=tf.float32)
         lr = tf.constant(1e-2, dtype=tf.float32)
         inf = tf.constant(float('inf'), dtype=tf.float32)
@@ -484,6 +593,34 @@ class DiceTensorFlow2(ExplainerBase):
         sdc = (2.0 * intersection) / (union + eps)
         sdc = tf.where(tf.math.is_nan(sdc), tf.ones_like(sdc), sdc)
         return tf.reduce_mean(sdc)
+
+    def compute_robustness_distance(self, perturbed_cfs: tf.Tensor, preprocessing_bins: int=10) -> float:
+        cfs = tf.stack(self.cfs, axis=0)
+        cfs_processed, preturbed_cfs_processed = self._preprocess_for_robustness(cfs, perturbed_cfs,
+                                                                                 num_bins=preprocessing_bins)
+        intersection = tf.reduce_sum(tf.minimum(cfs_processed, preturbed_cfs_processed), axis=1)
+        union = tf.reduce_sum(cfs_processed, axis=1) + tf.reduce_sum(preturbed_cfs_processed, axis=1)
+        eps = tf.constant(1e-12, dtype=intersection.dtype)
+        dice_sorensen = (2.0 * intersection) / (union + eps)
+        dice_sorensen = tf.where(tf.math.is_nan(dice_sorensen), tf.ones_like(dice_sorensen), dice_sorensen)
+        return dice_sorensen
+
+    def compute_robustness_loss_(self, perturbed_cfs: tf.Tensor, preprocessing_bins: int=10,
+                                 desired_class="opposite"):
+        base_prob = tf.squeeze(self.predict_fn_with_grads(self.x1))
+        base_label = tf.cast(base_prob > 0.5, tf.float32)
+        base_label = tf.stop_gradient(base_label)
+
+        if desired_class == "opposite":
+            target_label = 1.0 - base_label
+        else:
+            target_label = tf.cast(desired_class, tf.float32)
+
+        dist = self.compute_robustness_distance(perturbed_cfs, preprocessing_bins)
+        pert_prob = tf.squeeze(self.predict_fn_with_grads(perturbed_cfs))  # shape [K] or [K,1]
+        pert_prob = tf.reshape(pert_prob, [-1])
+        gate = target_label * pert_prob + (1.0 - target_label) * (1.0 - pert_prob)
+        return tf.reduce_mean(dist * gate)
 
     def compute_yloss(self):
         """Computes the first part (y-loss) of the loss function."""
@@ -616,15 +753,24 @@ class DiceTensorFlow2(ExplainerBase):
 
         return regularization_loss
 
-    def compute_loss(self, preprocessing_bins: int=10, **kwargs):
+    def compute_loss(self, preprocessing_bins: int=10, robustness_distance_type=RobustnessType.DICE_SORENSEN, **kwargs):
         """Computes the overall loss"""
-        perturbed_cfs = self.generate_perturbations_vectorized(**kwargs)
+        perturbed_cfs = self.perturb_cfs("gaussian")
 
         self.yloss = self.compute_yloss()
         self.proximity_loss = self.compute_proximity_loss() if self.proximity_weight > 0 else 0.0
         self.diversity_loss = self.compute_diversity_loss() if self.diversity_weight > 0 else 0.0
-        self.robustness_loss = self.compute_robustness_loss(perturbed_cfs=perturbed_cfs, preprocessing_bins=preprocessing_bins) \
-                                                            if self.robustness_weight > 0 else 0.0
+        if robustness_distance_type == RobustnessType.DICE_SORENSEN:
+            self.robustness_loss = self.compute_robustness_loss_(perturbed_cfs=perturbed_cfs, preprocessing_bins=preprocessing_bins) \
+                                                                if self.robustness_weight > 0 else 0.0
+        elif robustness_distance_type == RobustnessType.GAUSSIAN_KERNEL:
+            self.robustness_loss = 1.0 if self.robustness_weight > 0 else 0.0
+        elif robustness_distance_type == RobustnessType.BINNED_GAUSSIAN_KERNEL:
+            self.robustness_loss = 1.0 if self.robustness_weight > 0 else 0.0
+        else:
+            raise ValueError(f"Unsupported robustness distance type: {robustness_distance_type}. Supported types: \
+                             `DICE_SORENSEN`, `GAUSSIAN_KERNEL`, `BINNED_GAUSSIAN_KERNEL`. Use `RobustnessType` \
+                             class for distance types")
         self.regularization_loss = self.compute_regularization_loss()
         self.loss = self.yloss + (self.proximity_weight * self.proximity_loss) - \
             (self.diversity_weight * self.diversity_loss) - \

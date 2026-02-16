@@ -1,4 +1,12 @@
 """Constants for dice-ml package."""
+from enum import Enum
+
+
+class RobustnessType(Enum):
+    DICE_SORENSEN = "dice-sorensen"
+    GATED_DICE_SORENSEN = "gated-dice-sorensen"
+    GAUSSIAN_KERNEL = "gaussian-kernel"
+    BINNED_GAUSSIAN_KERNEL = "binned-gaussian-kernel"
 
 
 class BackEndTypes:

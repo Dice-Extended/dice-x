@@ -8,15 +8,12 @@ import pandas as pd
 import csv
 import math
 
-
-# --- your local repos first on sys.path (unchanged) ---
 dice_path    = "/Users/volk/Documents/bau24-25/thesis/repos/DiCE"
 dice_x_path  = "/Users/volk/Documents/bau24-25/thesis/repos/DiCE-X"
 for p in (dice_x_path, dice_path):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-# --- DiCE / DiCE-X + your helpers ---
 import dice_ml
 from dice_ml.utils import helpers as dhelpers, neuralnetworks as dnn
 import dice_ml_x
@@ -27,10 +24,9 @@ from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsClassifier
 from collections import OrderedDict, defaultdict
 
-# ---- Prefect
+
 from prefect import flow, task, get_run_logger
 
-# ---- from your existing module
 from experiments.grid_search_experiment import (
     load_datasets,
     load_dice_x_models,
@@ -43,7 +39,7 @@ from experiments.grid_search_experiment import (
 # =========================
 @dataclass
 class EvalConfig:
-    n_test_points: int = 50
+    n_test_points: int = 10
     k_cfs: int = 5
     random_seed: int = 42
     n_samples_fidelity: int = 1000
@@ -51,7 +47,7 @@ class EvalConfig:
 
 @dataclass
 class Paths:
-    out_dir: Path = Path("lambda_grid_results/optuna_mo/selected_lambdas")
+    out_dir: Path = Path("monte_carlo_results/metrics")
     optuna_dir: Path = DefaultPaths().out_dir / "optuna_mo"
 
 # =========================
@@ -146,12 +142,10 @@ def read_selected_table(merged_csv: Path) -> pd.DataFrame:
     if df.empty:
         return df
 
-    # ensure numeric columns for lambdas
     for col in ("lambda1", "lambda2", "lambda3"):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
 
-    # enforce λ3 = 0.0 for baseline DiCE
     if "method" in df.columns and "lambda3" in df.columns:
         df.loc[df["method"] == "DiCE", "lambda3"] = 0.0
 

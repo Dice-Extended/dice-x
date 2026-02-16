@@ -28,13 +28,13 @@ class PyTorchModel(BaseModel):
             self.model = torch.load(self.model_path, weights_only=False)
             self.model.to(self.device)
 
-    '''def get_output(self, input_instance, model_score=True,
+    """ def get_output(self, input_instance, model_score=True,
                    transform_data=False, out_tensor=False):
-        """returns prediction probabilities
+        returns prediction probabilities
 
         :param input_tensor: test input.
         :param transform_data: boolean to indicate if data transformation is required.
-        """
+
         input_tensor = input_instance
         if transform_data:
             input_tensor = torch.tensor(self.transformer.transform(input_instance).to_numpy()).float()
@@ -45,30 +45,36 @@ class PyTorchModel(BaseModel):
             out = out.data.numpy()
         if model_score is False and self.model_type == ModelTypes.Classifier:
             out = np.round(out)  # TODO need to generalize for n-class classifier
-        return out'''
+        return out """
     
     def get_output(self, input_instance, model_score=True,
                transform_data=False, out_tensor=False):
-        """returns prediction probabilities, ensuring device alignment"""
 
-        if transform_data or not torch.is_tensor(input_instance):
-            arr = self.transformer.transform(input_instance).to_numpy(dtype=np.float32)    # type: ignore
-            input_tensor = torch.from_numpy(arr)
+        device = next(self.model.parameters()).device
+
+        input_tensor = input_instance
+
+        if transform_data:
+            input_tensor = torch.tensor(
+                self.transformer.transform(input_instance).to_numpy(),
+                dtype=torch.float32,
+                device=device
+            ).float()
+
+        if not torch.is_tensor(input_tensor):
+            input_tensor = torch.tensor(input_tensor, dtype=torch.float32, device=device).float()
         else:
-            input_tensor = input_instance
-        model_dev = next(self.model.parameters()).device
-        input_tensor = input_tensor.to(model_dev)
+            input_tensor = input_tensor.to(device=device, dtype=torch.float32).float()
 
         out = self.model(input_tensor).float()
+
+        if model_score is False and self.model_type == ModelTypes.Classifier:
+            out = torch.round(out)
 
         if not out_tensor:
             out = out.detach().cpu().numpy()
 
-        if model_score is False and self.model_type == ModelTypes.Classifier:
-            out = np.round(out)
-
         return out
-
 
     def set_eval_mode(self):
         self.model.eval()
@@ -78,5 +84,6 @@ class PyTorchModel(BaseModel):
         raise NotImplementedError("Future Support")
 
     def get_num_output_nodes(self, inp_size):
-        temp_input = torch.rand(1, inp_size).float()
-        return self.get_output(temp_input).data
+        device = next(self.model.parameters()).device
+        temp_input = torch.rand(1, inp_size, device=device).float()
+        return self.get_output(temp_input, out_tensor=True).detach()
