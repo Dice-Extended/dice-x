@@ -183,7 +183,7 @@ In case you may found useful this work for your research cite the original dice 
 
 @article{sureyya2025dicex,
   title={Ensemble Selection of Diverse Counterfactual Explanations Using Continuous Optimization},
-  author={Akyuz, Sureyya and Goktas, Polat and Bakir, Volkan},
+  author={Bakir, Volkan and Akyuz, Sureyya and Goktas, Polat},
   journal={Conference Proceedings (NeurIPS 2025)},
   year={2025}
 }
