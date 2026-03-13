@@ -82,7 +82,7 @@ class DicePyTorch(ExplainerBase):
                                   posthoc_sparsity_param=0.1, posthoc_sparsity_algorithm="linear", limit_steps_ls=10000,
                                   perturbation_method="gaussian", preprocessing_bins=10,
                                   robustness_type=RobustnessType.DICE_SORENSEN, separate_features: bool | None=None,
-                                  gate_only: bool | None=None, **kwargs):
+                                  gate_only: bool | None=None, inline_robustness: bool | None=None, **kwargs):
         """Generates diverse counterfactual explanations.
 
         :param query_instance: Test point of interest. A dictionary of feature names and values or a single row dataframe
@@ -154,7 +154,8 @@ class DicePyTorch(ExplainerBase):
                 query_instance, desired_class, optimizer, learning_rate, min_iter, max_iter,
                 project_iter, loss_diff_thres, loss_converge_maxiter, verbose, init_near_query_instance,
                 tie_random, stopping_threshold, posthoc_sparsity_param, posthoc_sparsity_algorithm, limit_steps_ls,
-                perturbation_method, preprocessing_bins, robustness_type, gate_only=gate_only, **kwargs)
+                perturbation_method, preprocessing_bins, robustness_type, gate_only=gate_only,
+                separate_features=separate_features, inline_robustness=inline_robustness, **kwargs)
 
         return exp.CounterfactualExamples(
             data_interface=self.data_interface,
@@ -588,7 +589,7 @@ class DicePyTorch(ExplainerBase):
             for v in self.encoded_categorical_feature_indexes:
                 regularization_loss += torch.pow((torch.sum(self.cfs[i][v[0]:v[-1]+1]) - 1.0), 2)
         return regularization_loss
-    
+
     def _preprocess_for_robustness(self, cfs: torch.Tensor, perturbed_cfs: torch.Tensor, num_bins: int=10) -> tuple:
         """
         Conducts preprocessing steps fro robustness loss calculation i.e., converts the given
@@ -828,7 +829,7 @@ class DicePyTorch(ExplainerBase):
 
     def compute_loss(self, method: str, desired_class, preprocessing_bins: int=10,
                      robustness_type: RobustnessType=RobustnessType.DICE_SORENSEN,
-                     separate_features: bool | None=None, gate_only: bool | None=None, **kwargs):
+                     separate_features: bool | None=None, gate_only: bool | None=None, inline_robustness: bool | None=None, **kwargs):
         """Computes the overall loss"""
         if robustness_type != RobustnessType.GAUSSIAN_KERNEL and separate_features is not None:
             raise ValueError("`separate_features` can only be used when `robustness_type == RobustnessType.GAUSSIAN_KERNEL`.")
@@ -839,26 +840,29 @@ class DicePyTorch(ExplainerBase):
         self.diversity_loss = self.compute_diversity_loss() if self.diversity_weight > 0 else 0.0
         self.regularization_loss = self.compute_regularization_loss()
         perturbed_cfs = self.generate_perturbations(method)
-        if robustness_type is not RobustnessType.DICE_SORENSEN:
-            perturbed_cfs = self.perturb_cfs(method=method, std_dev=kwargs.get("std_dev", 0.1), seed=42,
-                                             mean=kwargs.get("mean", 0.05), flip_prob=kwargs.get("flip_prob", 0.5),
-                                             cat_alpha=kwargs.get("cat_alpha", 0.7), cat_mode=kwargs.get("cat_mode", "dirichlet"))
-        # perturbed_cfs = self.generate_perturbations("gaussian")
-        if robustness_type == RobustnessType.DICE_SORENSEN:
-            self.robustness_loss = self.compute_robustness_loss(perturbed_cfs)
-        elif robustness_type == RobustnessType.GATED_DICE_SORENSEN:
-            self.robustness_loss = self.compute_robustness_loss_(perturbed_cfs=perturbed_cfs, desired_class=desired_class,
-                                                                 preprocessing_bins=preprocessing_bins) if self.robustness_weight > 0 else 0.0
-        elif robustness_type == RobustnessType.GAUSSIAN_KERNEL:
-            if gate_only == False:
-                perturbed_cfs = self.perturb_cfs(method=method)
-            self.robustness_loss = self.compute_robustness_loss_RBF(perturbed_cfs=perturbed_cfs, desired_class=desired_class,
-                                                                    gamma=1.0, separate_features=separate_features, gate_only=gate_only) \
-                                                                    if self.robustness_weight > 0 else 0.0
-        elif robustness_type == RobustnessType.BINNED_GAUSSIAN_KERNEL:
-            self.robustness_loss = self.compute_robustness_loss_binned_RBF(perturbed_cfs=perturbed_cfs, num_bins=preprocessing_bins) if self.robustness_weight > 0 else 0.0
+        if inline_robustness:
+            if robustness_type is not RobustnessType.DICE_SORENSEN:
+                perturbed_cfs = self.perturb_cfs(method=method, std_dev=kwargs.get("std_dev", 0.1), seed=42,
+                                                mean=kwargs.get("mean", 0.05), flip_prob=kwargs.get("flip_prob", 0.5),
+                                                cat_alpha=kwargs.get("cat_alpha", 0.7), cat_mode=kwargs.get("cat_mode", "dirichlet"))
+            # perturbed_cfs = self.generate_perturbations("gaussian")
+            if robustness_type == RobustnessType.DICE_SORENSEN:
+                self.robustness_loss = self.compute_robustness_loss(perturbed_cfs)
+            elif robustness_type == RobustnessType.GATED_DICE_SORENSEN:
+                self.robustness_loss = self.compute_robustness_loss_(perturbed_cfs=perturbed_cfs, desired_class=desired_class,
+                                                                    preprocessing_bins=preprocessing_bins) if self.robustness_weight > 0 else 0.0
+            elif robustness_type == RobustnessType.GAUSSIAN_KERNEL:
+                if gate_only == False:
+                    perturbed_cfs = self.perturb_cfs(method=method)
+                self.robustness_loss = self.compute_robustness_loss_RBF(perturbed_cfs=perturbed_cfs, desired_class=desired_class,
+                                                                        gamma=1.0, separate_features=separate_features, gate_only=gate_only) \
+                                                                        if self.robustness_weight > 0 else 0.0
+            elif robustness_type == RobustnessType.BINNED_GAUSSIAN_KERNEL:
+                self.robustness_loss = self.compute_robustness_loss_binned_RBF(perturbed_cfs=perturbed_cfs, num_bins=preprocessing_bins) if self.robustness_weight > 0 else 0.0
+            else:
+                raise ValueError("Unsupported method. Supported types: Dice-Sorensen, Gaussian Kernel, and Binned Gaussian Kernel")
         else:
-            raise ValueError("Unsupported method. Supported types: Dice-Sorensen, Gaussian Kernel, and Binned Gaussian Kernel")
+            self.robustness_loss = 0.0
 
         self.loss = self.yloss + (self.proximity_weight * self.proximity_loss) - \
             (self.diversity_weight * self.diversity_loss) - \
@@ -984,7 +988,8 @@ class DicePyTorch(ExplainerBase):
                              posthoc_sparsity_algorithm, limit_steps_ls, perturbation_method: str,
                              preprocessing_bins: int=10,
                              robustness_type: RobustnessType=RobustnessType.DICE_SORENSEN,
-                             separate_features: bool | None=None, gate_only: bool | None=None, **kwargs):
+                             separate_features: bool | None=None, gate_only: bool | None=None, inline_robustness: bool | None=None,
+                             **kwargs):
         """Finds counterfactuals by gradient-descent."""
 
         self._reset_loss_history()
@@ -1052,12 +1057,15 @@ class DicePyTorch(ExplainerBase):
 
                 # get loss and backpropogate
                 loss_value = self.compute_loss(perturbation_method, desired_class, preprocessing_bins, robustness_type,
-                                               separate_features=separate_features, gate_only=gate_only, **kwargs)
+                                               separate_features=separate_features, gate_only=gate_only, inline_robustness=inline_robustness,
+                                               **kwargs)
                 self.loss.backward()
-                
-                self._populate_loss_history(it, self.yloss.detach().item(), self.proximity_loss.detach().item(),
-                                            self.diversity_loss.detach().item() if type(self.diversity_loss) == torch.Tensor else self.diversity_loss,
-                                            self.robustness_loss.detach().item(), loss_value.detach().item())
+
+                self._populate_loss_history(it, self.yloss.detach().item() if isinstance(self.yloss, torch.Tensor) else self.yloss,
+                                            self.proximity_loss.detach().item() if isinstance(self.proximity_loss, torch.Tensor) else self.proximity_loss,
+                                            self.diversity_loss.detach().item() if isinstance(self.diversity_loss,
+                                                                                              torch.Tensor) else self.diversity_loss,
+                                            self.robustness_loss.detach().item() if isinstance(self.robustness_loss, torch.Tensor) else self.robustness_loss, loss_value.detach().item())
 
                 # freeze features other than feat_to_vary_idxs
                 for ix in range(self.total_CFs):

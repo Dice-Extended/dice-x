@@ -250,7 +250,7 @@ def load_german_credit_dataset(model_type: str=None) -> pd.DataFrame:
         urlretrieve(dataset_links['german-credit-risk'], german_credit_file_name)
     with zipfile.ZipFile(german_credit_file_name) as unzip:
         unzip.extractall(outdirname)
-    
+
     raw_data = np.genfromtxt(f"{outdirname}/german.data", delimiter=", ",
                              dtype=str, invalid_raise=False)
     df = _preprocess_german_data(raw_data)

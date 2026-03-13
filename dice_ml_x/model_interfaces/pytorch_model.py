@@ -62,6 +62,8 @@ class PyTorchModel(BaseModel):
             ).float()
 
         if not torch.is_tensor(input_tensor):
+            if hasattr(input_tensor, 'values'):
+                input_tensor = input_tensor.values
             input_tensor = torch.tensor(input_tensor, dtype=torch.float32, device=device).float()
         else:
             input_tensor = input_tensor.to(device=device, dtype=torch.float32).float()

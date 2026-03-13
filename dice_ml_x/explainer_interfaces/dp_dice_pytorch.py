@@ -508,7 +508,7 @@ class DicePyTorchDP(ExplainerBase):
         perturbed_cfs_processed = torch.cat([perturbed_cfs_one_hot, perturbed_cfs_cats], dim=1)
 
         return cfs_processed, perturbed_cfs_processed
-    
+
 
     def compute_robustness_loss(self, perturbed_cfs: torch.Tensor) -> torch.Tensor:
         """
@@ -519,7 +519,7 @@ class DicePyTorchDP(ExplainerBase):
             be compared against the original counterfactual instances.
         Returns:
             float: Robustness loss in scalar.
-        """ 
+        """
         cfs = torch.stack([self.dp_ae.decoder(self.rho_s + delta) for delta in self.cfs])
 
         # from IPython.display import displaya
@@ -531,9 +531,9 @@ class DicePyTorchDP(ExplainerBase):
         cfs_processed, perturbed_cfs_processed = self._preprocess_for_robustness(cfs, perturbed_cfs)
 
         intersection = torch.sum(torch.min(cfs_processed, perturbed_cfs_processed), dim=1)
-        
+
         union = torch.sum(cfs_processed, dim=1) + torch.sum(perturbed_cfs_processed, dim=1)
-        
+
         epsilon = 1e-8
         sorensen_dice_coefficient = (2 * intersection) / (union + epsilon)
         sorensen_dice_coefficient[torch.isnan(sorensen_dice_coefficient)] = 1.0
