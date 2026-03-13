@@ -181,11 +181,21 @@ In case you may found useful this work for your research cite the original dice 
   year={2020}
 }
 
-@article{sureyya2025dicex,
-  title={Ensemble Selection of Diverse Counterfactual Explanations Using Continuous Optimization},
-  author={Bakir, Volkan and Akyuz, Sureyya and Goktas, Polat},
-  journal={Conference Proceedings (NeurIPS 2025)},
-  year={2025}
+@InProceedings{10.1007/978-3-032-08384-5_25,
+author="Bakir, Volkan
+and Goktas, Polat
+and Aky{\"u}z, S{\"u}reyya",
+editor="Le Thi, Hoai An
+and Pham Dinh, Tao
+and Le, Hoai Minh",
+title="DiCE-Extended: A Robust Approach to Counterfactual Explanations in Machine Learning",
+booktitle="Modelling, Computation and Optimization in Information Systems and Management Sciences",
+year="2026",
+publisher="Springer Nature Switzerland",
+address="Cham",
+pages="299--310",
+abstract="Explainable artificial intelligence (XAI) has become increasingly important in decision-critical domains such as healthcare, finance, and law. Counterfactual (CF) explanations, a key approach in XAI, provide users with actionable insights by suggesting minimal modifications to input features that lead to different model outcomes. Despite significant advancements, existing CF generation methods often struggle to balance proximity, diversity, and robustness, limiting their real-world applicability. A widely adopted framework, Diverse Counterfactual Explanations (DiCE), emphasizes diversity but lacks robustness, making CF explanations sensitive to perturbations and domain constraints. To address these challenges, we introduce DiCE-Extended, an enhanced CF explanation framework that integrates multi-objective optimization techniques to improve robustness while maintaining interpretability. Our approach introduces a novel robustness metric based on the Dice-S{\o}rensen coefficient, enabling stability under small input variations. Additionally, we refine CF generation using weighted loss components ({\$}{\$}{\backslash}lambda {\_}p{\$}{\$}$\lambda$p, {\$}{\$}{\backslash}lambda {\_}d{\$}{\$}$\lambda$d, {\$}{\$}{\backslash}lambda {\_}r{\$}{\$}$\lambda$r) to balance proximity, diversity, and robustness. We empirically validate DiCE-Extended on benchmark datasets (COMPAS, Lending Club, German Credit, Adult Income) across multiple ML backends (Scikit-learn, PyTorch, TensorFlow). Results demonstrate improved CF validity, stability, and alignment with decision boundaries compared to standard DiCE-generated explanations. Our findings highlight the potential of DiCE-Extended in generating more reliable and interpretable CFs for high-stakes applications. Future work could explore adaptive optimization techniques and domain-specific constraints to further enhance CF generation in real-world scenarios.",
+isbn="978-3-032-08384-5"
 }
 ```
 
