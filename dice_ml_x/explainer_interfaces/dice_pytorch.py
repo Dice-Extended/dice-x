@@ -14,11 +14,11 @@ from dice_ml_x import diverse_counterfactuals as exp
 from dice_ml_x.explainer_interfaces.explainer_base import ExplainerBase
 from dice_ml_x.perturbation_factory import PerturbationFactory
 from dice_ml_x.constants import RobustnessType
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 
 class DicePyTorch(ExplainerBase):
 
-    def __init__(self, data_interface, model_interface):
+    def __init__(self, data_interface, model_interface, dice_x: bool):
         """Init method
 
         :param data_interface: an interface class to access data related params.
@@ -37,7 +37,7 @@ class DicePyTorch(ExplainerBase):
         self.minx, self.maxx, self.encoded_categorical_feature_indexes, self.encoded_continuous_feature_indexes, \
             self.cont_minx, self.cont_maxx, self.cont_precisions = self.data_interface.get_data_params_for_gradient_dice()
         self.num_output_nodes = self.model.get_num_output_nodes(len(self.data_interface.ohe_encoded_feature_names)).shape[1]
-        
+        self.dice_x = dice_x
         # variables required to generate CFs - see generate_counterfactuals() for more info
         self.cfs = []
         self.features_to_vary = []
@@ -148,14 +148,18 @@ class DicePyTorch(ExplainerBase):
             self.do_loss_initializations(yloss_type, diversity_loss_type, feature_weights)
         if [proximity_weight, diversity_weight, robustness_weight, categorical_penalty] != self.hyperparameters:
             self.update_hyperparameters(proximity_weight, diversity_weight, robustness_weight, categorical_penalty)
-
+        dice_x_params = OrderedDict()
+        if self.dice_x:
+            dice_x_params = OrderedDict(perturbation_method=perturbation_method, preprocessing_bins=preprocessing_bins,
+                                        robustness_type=robustness_type, separate_features=separate_features,
+                                        inline_robustness=inline_robustness)
+        
         final_cfs_df, test_instance_df, final_cfs_df_sparse = \
             self.find_counterfactuals(
                 query_instance, desired_class, optimizer, learning_rate, min_iter, max_iter,
                 project_iter, loss_diff_thres, loss_converge_maxiter, verbose, init_near_query_instance,
                 tie_random, stopping_threshold, posthoc_sparsity_param, posthoc_sparsity_algorithm, limit_steps_ls,
-                perturbation_method, preprocessing_bins, robustness_type, gate_only=gate_only,
-                separate_features=separate_features, inline_robustness=inline_robustness, **kwargs)
+                **dice_x_params, **kwargs)
 
         return exp.CounterfactualExamples(
             data_interface=self.data_interface,
@@ -985,7 +989,7 @@ class DicePyTorch(ExplainerBase):
     def find_counterfactuals(self, query_instance, desired_class, optimizer, learning_rate, min_iter,
                              max_iter, project_iter, loss_diff_thres, loss_converge_maxiter, verbose,
                              init_near_query_instance, tie_random, stopping_threshold, posthoc_sparsity_param,
-                             posthoc_sparsity_algorithm, limit_steps_ls, perturbation_method: str,
+                             posthoc_sparsity_algorithm, limit_steps_ls, perturbation_method: str=None,
                              preprocessing_bins: int=10,
                              robustness_type: RobustnessType=RobustnessType.DICE_SORENSEN,
                              separate_features: bool | None=None, gate_only: bool | None=None, inline_robustness: bool | None=None,
@@ -1105,7 +1109,9 @@ class DicePyTorch(ExplainerBase):
                     if avg_preds_dist < self.min_dist_from_threshold[loop_ix]:
                         self.min_dist_from_threshold[loop_ix] = avg_preds_dist
                         for ix in range(self.total_CFs):
-                            self.best_backup_cfs_preds[loop_ix+ix] = test_preds_stored[ix].detach().clone()
+                            # self.best_backup_cfs_preds[loop_ix+ix] = test_preds_stored[ix].detach().clone()
+                            # self.best_backup_cfs_preds[loop_ix+ix] = copy.deepcopy(test_preds_stored[ix])
+                            self.best_backup_cfs[loop_ix+ix] = copy.deepcopy(temp_cfs_stored[ix])
                             self.best_backup_cfs_preds[loop_ix+ix] = copy.deepcopy(test_preds_stored[ix])
 
             # rounding off final cfs - not necessary when inter_project=True
